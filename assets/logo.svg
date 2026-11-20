@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="380" height="140" viewBox="0 0 380 140" role="img" aria-labelledby="t">
+  <title id="t">ampere</title>
+  <!-- icon: a CPU chip with a lightning bolt -->
+  <g transform="translate(20 20)">
+    <!-- chip pins -->
+    <g stroke="#475467" stroke-width="5" stroke-linecap="round">
+      <line x1="30" y1="0" x2="30" y2="12"/>
+      <line x1="50" y1="0" x2="50" y2="12"/>
+      <line x1="70" y1="0" x2="70" y2="12"/>
+      <line x1="30" y1="88" x2="30" y2="100"/>
+      <line x1="50" y1="88" x2="50" y2="100"/>
+      <line x1="70" y1="88" x2="70" y2="100"/>
+      <line x1="0" y1="30" x2="12" y2="30"/>
+      <line x1="0" y1="50" x2="12" y2="50"/>
+      <line x1="0" y1="70" x2="12" y2="70"/>
+      <line x1="88" y1="30" x2="100" y2="30"/>
+      <line x1="88" y1="50" x2="100" y2="50"/>
+      <line x1="88" y1="70" x2="100" y2="70"/>
+    </g>
+    <!-- chip body -->
+    <rect x="12" y="12" width="76" height="76" rx="14" fill="#F79009"/>
+    <!-- lightning bolt -->
+    <path d="M56 22 L32 54 H48 L42 78 L68 44 H52 Z" fill="#FFFFFF"/>
+  </g>
+  <!-- wordmark -->
+  <text x="140" y="86" font-family="Helvetica, Arial, sans-serif"
+        font-size="64" font-weight="bold" fill="#344054">ampere</text>
+  <text x="143" y="114" font-family="Helvetica, Arial, sans-serif"
+        font-size="17" fill="#667085">power utility</text>
+</svg>

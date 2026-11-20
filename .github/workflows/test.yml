@@ -1,0 +1,44 @@
+name: test
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod # uses the "go" line in go.mod
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        # No root or RAPL hardware needed: tests use a fake powercap tree.
+        run: go test -race -v ./...
+
+      - name: Build
+        run: make build
+
+      - name: Smoke test
+        run: |
+          ./bin/ampere --version
+          ./bin/ampere status
