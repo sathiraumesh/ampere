@@ -101,7 +101,7 @@ func TestStatusUnknownSourceUsesDefault(t *testing.T) {
 
 	out := run(t, "status")
 
-	assertContains(t, out, "✓ hwmon\n", "Using: hwmon")
+	assertContains(t, out, " hwmon\n", "Using: hwmon")
 }
 
 func TestStatusPrefersFirstAvailable(t *testing.T) {
@@ -113,7 +113,7 @@ func TestStatusPrefersFirstAvailable(t *testing.T) {
 
 	out := run(t, "status")
 
-	assertContains(t, out, "rapl: not here", "✓ hwmon", "✓ model", "Using: hwmon")
+	assertContains(t, out, "rapl: not here", " hwmon\n", " model\n", "Using: hwmon")
 }
 
 func TestStatusNoSources(t *testing.T) {

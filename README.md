@@ -2,6 +2,12 @@
   <img src="assets/logo.svg" alt="ampere" width="420">
 </p>
 
+<p align="center">
+  <a href="https://github.com/sathiraumesh/ampere/actions/workflows/test.yml">
+    <img src="https://github.com/sathiraumesh/ampere/actions/workflows/test.yml/badge.svg" alt="test">
+  </a>
+</p>
+
 # ampere
 
 `ampere` estimates how much energy each process uses on a Linux machine.
