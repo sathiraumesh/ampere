@@ -112,3 +112,46 @@ func TestReadPicksUpNewValues(t *testing.T) {
 		t.Errorf("second Read() = %d, want 1500", got)
 	}
 }
+
+func TestReadZones(t *testing.T) {
+	root := fakePowercap(t,
+		fakeZone{"intel-rapl:0", "package-0", "1000", "65532610987"},
+		fakeZone{"intel-rapl:0:0", "core", "400", "65532610987"},
+	)
+	zones, err := statusAt(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := (&Source{Zones: zones}).ReadZones()
+	if err != nil {
+		t.Fatalf("ReadZones: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d zones, want 2 (all zones, including subzones)", len(got))
+	}
+	byID := map[string]uint64{}
+	for _, z := range got {
+		byID[z.ID] = z.EnergyUJ
+		if z.MaxUJ != 65532610987 {
+			t.Errorf("%s MaxUJ = %d", z.ID, z.MaxUJ)
+		}
+	}
+	if byID["intel-rapl:0"] != 1000 || byID["intel-rapl:0:0"] != 400 {
+		t.Errorf("energies = %v", byID)
+	}
+}
+
+func TestReadZonesErrors(t *testing.T) {
+	want := errors.New("no rapl")
+	if _, err := (&Source{err: want}).ReadZones(); err != want {
+		t.Errorf("unavailable: err = %v, want %v", err, want)
+	}
+
+	root := fakePowercap(t, fakeZone{"intel-rapl:0", "package-0", "", "100"})
+	zones, _ := statusAt(root)
+	if _, err := (&Source{Zones: zones}).ReadZones(); err == nil ||
+		!strings.Contains(err.Error(), "intel-rapl:0") {
+		t.Errorf("unreadable zone: err = %v, want error naming the zone", err)
+	}
+}

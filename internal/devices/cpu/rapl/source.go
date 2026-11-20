@@ -64,3 +64,26 @@ func (s *Source) Read() (uint64, error) {
 	}
 	return sum, nil
 }
+
+// ReadZones returns the current raw counter of every zone and subzone
+// (package, core, dram, psys, ...). It implements devices.ZoneReader.
+func (s *Source) ReadZones() ([]devices.ZoneReading, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	out := make([]devices.ZoneReading, 0, len(s.Zones))
+	for _, z := range s.Zones {
+		cur, err := utils.ReadUint(filepath.Join(z.Path, "energy_uj"))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", z.ID, err)
+		}
+		out = append(out, devices.ZoneReading{
+			ID:       z.ID,
+			Name:     z.Name,
+			ParentID: z.ParentID,
+			EnergyUJ: cur,
+			MaxUJ:    z.MaxEnergyRangeUJ,
+		})
+	}
+	return out, nil
+}

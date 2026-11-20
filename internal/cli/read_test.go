@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +55,17 @@ func fakeClock(t *testing.T) *[]time.Duration {
 	return &slept
 }
 
+// readSample runs "ampere read <args> -o json" and decodes the sample.
+func readSample(t *testing.T, args ...string) devices.Sample {
+	t.Helper()
+	out := run(t, append(append([]string{"read"}, args...), "-o", "json")...)
+	var s devices.Sample
+	if err := json.Unmarshal([]byte(out), &s); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, out)
+	}
+	return s
+}
+
 // runErr executes the root command and returns its output and error.
 func runErr(args ...string) (string, error) {
 	var out strings.Builder
@@ -67,15 +82,20 @@ func TestReadPower(t *testing.T) {
 	src := &counterSource{readings: []uint64{1_000_000, 13_000_000}} // +12 J
 	withSources(t, src)
 
-	out := run(t, "read")
+	got := readSample(t)
 
-	assertContains(t, out,
-		"device:    cpu",
-		"source:    fake",
-		"interval:  1.000000 s",
-		"energy:    12.000000 J",
-		"power:     12.00 W",
-	)
+	want := devices.Sample{
+		Device:    "cpu",
+		Source:    "fake",
+		Start:     time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC),
+		End:       time.Date(2026, 11, 20, 10, 0, 1, 0, time.UTC),
+		IntervalS: 1,
+		EnergyJ:   12,
+		PowerW:    12,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("sample = %+v\nwant     %+v", got, want)
+	}
 	if len(*slept) != 1 || (*slept)[0] != time.Second {
 		t.Errorf("slept %v, want [1s]", *slept)
 	}
@@ -88,9 +108,11 @@ func TestReadInterval(t *testing.T) {
 	fakeClock(t)
 	withSources(t, &counterSource{readings: []uint64{0, 50_000_000}}) // 50 J
 
-	out := run(t, "read", "--interval", "5s")
+	got := readSample(t, "--interval", "5s")
 
-	assertContains(t, out, "interval:  5.000000 s", "energy:    50.000000 J", "power:     10.00 W")
+	if got.IntervalS != 5 || got.EnergyJ != 50 || got.PowerW != 10 {
+		t.Errorf("sample = %+v, want 5 s, 50 J, 10 W", got)
+	}
 }
 
 func TestReadUsesPreferredSource(t *testing.T) {
@@ -100,9 +122,55 @@ func TestReadUsesPreferredSource(t *testing.T) {
 		&counterSource{readings: []uint64{0, 1_000_000}},      // used
 	)
 
-	out := run(t, "read")
+	if got := readSample(t); got.Source != "fake" {
+		t.Errorf("source = %q, want fake", got.Source)
+	}
+}
 
-	assertContains(t, out, "source:    fake")
+func TestReadTable(t *testing.T) {
+	fakeClock(t)
+	withSources(t, &counterSource{readings: []uint64{1_000_000, 13_000_000}})
+
+	out := run(t, "read") // table is the default
+
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want header + 1 row, got %d lines:\n%s", len(lines), out)
+	}
+	header := strings.Join(strings.Fields(lines[0]), " ")
+	if header != "DEVICE SOURCE INTERVAL (s) ENERGY (J) POWER (W)" {
+		t.Errorf("header = %q", header)
+	}
+	if row := strings.Fields(lines[1]); strings.Join(row, " ") != "cpu fake 1.000000 12.000000 12.00" {
+		t.Errorf("row = %q", lines[1])
+	}
+}
+
+func TestReadJSONIsOneLine(t *testing.T) {
+	fakeClock(t)
+	withSources(t, &counterSource{readings: []uint64{0, 1_000_000}})
+
+	out := run(t, "read", "-o", "json")
+
+	if strings.Count(out, "\n") != 1 || !strings.HasSuffix(out, "}\n") {
+		t.Errorf("want one JSON object per line, got:\n%s", out)
+	}
+	for _, key := range []string{`"device"`, `"source"`, `"start"`, `"end"`,
+		`"interval_s"`, `"energy_j"`, `"power_w"`} {
+		if !strings.Contains(out, key) {
+			t.Errorf("JSON missing %s: %s", key, out)
+		}
+	}
+}
+
+func TestReadBadOutput(t *testing.T) {
+	fakeClock(t)
+	withSources(t, &counterSource{readings: []uint64{0, 1}})
+
+	_, err := runErr("read", "-o", "xml")
+	if err == nil || !strings.Contains(err.Error(), "--output") {
+		t.Errorf("err = %v, want --output error", err)
+	}
 }
 
 func TestReadNoSource(t *testing.T) {
@@ -155,9 +223,11 @@ func TestReadChooseSource(t *testing.T) {
 		namedSource{chosen, "hwmon"},
 	)
 
-	out := run(t, "read", "--source", "hwmon")
+	got := readSample(t, "--source", "hwmon")
 
-	assertContains(t, out, "source:    hwmon", "energy:    2.000000 J")
+	if got.Source != "hwmon" || got.EnergyJ != 2 {
+		t.Errorf("sample = %+v, want hwmon, 2 J", got)
+	}
 }
 
 func TestReadChooseUnknownSource(t *testing.T) {
@@ -195,9 +265,11 @@ func TestReadOtherDevice(t *testing.T) {
 		&counterSource{readings: []uint64{0, 3_000_000}, dev: "gpu"},
 	)
 
-	out := run(t, "read", "--device", "gpu")
+	got := readSample(t, "--device", "gpu")
 
-	assertContains(t, out, "device:    gpu", "energy:    3.000000 J")
+	if got.Device != "gpu" || got.EnergyJ != 3 {
+		t.Errorf("sample = %+v, want gpu, 3 J", got)
+	}
 }
 
 func TestReadUnknownDevice(t *testing.T) {
@@ -207,5 +279,139 @@ func TestReadUnknownDevice(t *testing.T) {
 	_, err := runErr("read", "-d", "gpu")
 	if err == nil || !strings.Contains(err.Error(), `unknown device "gpu" (known: cpu)`) {
 		t.Errorf("err = %v, want unknown device", err)
+	}
+}
+
+func TestReadToFileJSON(t *testing.T) {
+	fakeClock(t)
+	path := filepath.Join(t.TempDir(), "samples.jsonl")
+
+	for i := 0; i < 2; i++ {
+		withSources(t, &counterSource{readings: []uint64{0, 1_000_000}})
+		if out := run(t, "read", "-o", "json", "-f", path); out != "" {
+			t.Errorf("with --file nothing should be printed, got %q", out)
+		}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want 2 appended JSON lines, got %d:\n%s", len(lines), data)
+	}
+	for _, l := range lines {
+		var s devices.Sample
+		if err := json.Unmarshal([]byte(l), &s); err != nil || s.EnergyJ != 1 {
+			t.Errorf("line %q: %+v, %v", l, s, err)
+		}
+	}
+}
+
+func TestReadToFileTableHeaderOnce(t *testing.T) {
+	fakeClock(t)
+	path := filepath.Join(t.TempDir(), "samples.txt")
+
+	for i := 0; i < 3; i++ {
+		withSources(t, &counterSource{readings: []uint64{0, 1_000_000}})
+		run(t, "read", "-f", path)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), "DEVICE"); n != 1 {
+		t.Errorf("header written %d times, want 1:\n%s", n, data)
+	}
+	if n := strings.Count(string(data), "cpu"); n != 3 {
+		t.Errorf("want 3 rows, got %d:\n%s", n, data)
+	}
+}
+
+func TestReadToFileBadPath(t *testing.T) {
+	fakeClock(t)
+	withSources(t, &counterSource{readings: []uint64{0, 1}})
+
+	_, err := runErr("read", "-f", filepath.Join(t.TempDir(), "no-such-dir", "x.jsonl"))
+	if err == nil {
+		t.Error("want an error for a file in a missing folder")
+	}
+}
+
+// zoneSource is a counterSource that also has zones (like RAPL).
+type zoneSource struct {
+	*counterSource
+	zoneReadings [][]devices.ZoneReading
+	zoneCalls    int
+}
+
+func (z *zoneSource) ReadZones() ([]devices.ZoneReading, error) {
+	r := z.zoneReadings[z.zoneCalls]
+	z.zoneCalls++
+	return r, nil
+}
+
+func laptopZones() *zoneSource {
+	return &zoneSource{
+		counterSource: &counterSource{readings: []uint64{0, 12_000_000}}, // 12 J
+		zoneReadings: [][]devices.ZoneReading{
+			{
+				{ID: "intel-rapl:0", Name: "package-0", EnergyUJ: 0},
+				{ID: "intel-rapl:0:0", Name: "core", ParentID: "intel-rapl:0", EnergyUJ: 0},
+			},
+			{
+				{ID: "intel-rapl:0", Name: "package-0", EnergyUJ: 12_000_000},
+				{ID: "intel-rapl:0:0", Name: "core", ParentID: "intel-rapl:0", EnergyUJ: 5_000_000},
+			},
+		},
+	}
+}
+
+func TestReadZonesByDefaultJSON(t *testing.T) {
+	fakeClock(t)
+	withSources(t, laptopZones())
+
+	got := readSample(t)
+
+	want := []devices.ZoneSample{
+		{ID: "intel-rapl:0", Name: "package-0", EnergyJ: 12, PowerW: 12},
+		{ID: "intel-rapl:0:0", Name: "core", Parent: "intel-rapl:0", EnergyJ: 5, PowerW: 5},
+	}
+	if !reflect.DeepEqual(got.Zones, want) {
+		t.Errorf("zones = %+v\nwant    %+v", got.Zones, want)
+	}
+}
+
+func TestReadZonesSeparateTable(t *testing.T) {
+	fakeClock(t)
+	withSources(t, laptopZones())
+
+	out := run(t, "read")
+
+	parts := strings.Split(strings.TrimSpace(out), "\n\n")
+	if len(parts) != 2 {
+		t.Fatalf("want total table and zones table separated by a blank line:\n%s", out)
+	}
+	assertContains(t, parts[0], "DEVICE", "cpu", "12.000000")
+	assertContains(t, parts[1], "ZONE", "NAME", "PARENT",
+		"intel-rapl:0 ", "package-0", "intel-rapl:0:0", "core", "5.000000")
+	if strings.Contains(parts[0], "core") {
+		t.Errorf("zones must not be in the total table:\n%s", parts[0])
+	}
+}
+
+func TestReadNoZonesForPlainSource(t *testing.T) {
+	fakeClock(t)
+	withSources(t, &counterSource{readings: []uint64{0, 1_000_000}})
+
+	if got := readSample(t); got.Zones != nil {
+		t.Errorf("source without zones: Zones = %+v, want nil", got.Zones)
+	}
+	withSources(t, &counterSource{readings: []uint64{0, 1_000_000}}) // fresh readings
+	out := run(t, "read", "-o", "json")
+	if strings.Contains(out, "zones") {
+		t.Errorf(`JSON should omit "zones" when there are none: %s`, out)
 	}
 }

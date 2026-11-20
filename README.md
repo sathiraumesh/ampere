@@ -82,14 +82,24 @@ Using: rapl
 sudo ./bin/ampere read                 # over 1 s
 sudo ./bin/ampere read --interval 5s   # over 5 s
 sudo ./bin/ampere read --source rapl   # force a source (default: first available)
+sudo ./bin/ampere read -o json         # JSON instead of a table
 make read-root                         # same, builds first
 ```
 
 ```text
-source:    rapl
-interval:  1.000213 s
-energy:    12.345678 J
-power:     12.34 W
+DEVICE  SOURCE  INTERVAL (s)  ENERGY (J)  POWER (W)
+cpu     rapl    1.000213      12.345678   12.34
+```
+
+With `-o json`, each sample is one JSON object per line (JSON Lines), so
+repeated runs can be appended to a file:
+
+```bash
+sudo ./bin/ampere read -o json -f samples.jsonl   # appends one line per run
+```
+
+```json
+{"device":"cpu","source":"rapl","start":"2026-11-20T10:00:00Z","end":"2026-11-20T10:00:01.000213Z","interval_s":1.000213,"energy_j":12.345678,"power_w":12.34}
 ```
 
 `read` takes two readings of the preferred source, `--interval` apart.

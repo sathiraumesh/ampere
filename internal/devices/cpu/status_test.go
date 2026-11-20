@@ -4,12 +4,7 @@ import (
 	"testing"
 
 	"sathiraumesh/ampere/internal/devices"
-	"sathiraumesh/ampere/internal/devices/cpu/rapl"
 )
-
-// Compile-time check: if a method is missing or has the wrong signature,
-// the build fails here.
-var _ devices.Source = (*rapl.Source)(nil)
 
 func TestStatusListsRAPL(t *testing.T) {
 	sources := Status()
