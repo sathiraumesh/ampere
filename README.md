@@ -19,11 +19,11 @@ It combines two kernel sources:
 - **CPU time** per process from `/proc`
 
 ```text
-process energy = CPU energy (RAPL) × process CPU time / busy CPU time
+process energy = CPU energy (RAPL) × process CPU time / active CPU time
 ```
 
-> Status: early development. `ampere status` and `ampere measure` work;
-> per-process energy (`ampere pid`) is in progress.
+> Status: early development. `ampere status` and `ampere measure`
+> (with `--pid` for one process) work.
 
 ## Requirements
 
@@ -109,6 +109,44 @@ previous one's end reading, so there are no gaps between them. The table
 header is printed once; with `-f`, every sample is appended as it is taken.
 If the counter wraps to 0 during a sample, it reports an error; run it again.
 
+### Energy of one process
+
+```bash
+sudo ./bin/ampere measure --pid 1234               # over 1 s
+sudo ./bin/ampere measure --pid 1234 -i 1s -n 20   # 20 samples, back to back
+sudo ./bin/ampere measure --pid 1234 -o json -f pid.jsonl
+```
+
+For the device total and **every zone the source reports** (on RAPL:
+`package-N`, `core`, `uncore`, `dram`, `psys`, whichever this machine has),
+the energy of each interval is split by CPU time from `/proc`:
+
+```text
+active energy  = energy × active ticks / (active + idle ticks)
+idle energy    = energy × idle ticks   / (active + idle ticks)
+process energy = active energy × process ticks / active ticks
+```
+
+- **active** ticks: user, nice, system, irq, softirq (`/proc/stat`)
+- **idle** ticks: idle, iowait. Steal is left out (another VM ran then).
+- **process** ticks: utime + stime of the process (`/proc/<pid>/stat`)
+
+Non-CPU zones such as `dram` are split by the same CPU time, so their
+active/idle/process numbers are an estimate, not a separate measurement.
+Parent zones include their children: do not sum zone rows.
+
+```text
+PID   COMM    INTERVAL (s)  CPU ACTIVE  PID CPU  ENERGY (J)  ACTIVE (J)  IDLE (J)  PID (J)   PID (W)
+1234  worker  1.000210      25.0%       40.0%    12.000000   3.000000    9.000000  1.200000  1.20
+
+ZONE            NAME       PARENT        ENERGY (J)  ACTIVE (J)  IDLE (J)  PID (J)   PID (W)
+intel-rapl:0    package-0  -             12.000000   3.000000    9.000000  1.200000  1.20
+intel-rapl:0:0  core       intel-rapl:0  5.000000    1.250000    3.750000  0.500000  0.50
+```
+
+The command fails if the process exits, or its PID is reused by a new
+process, during the run.
+
 ## How it works
 
 ### CPU energy sources
@@ -151,6 +189,9 @@ ampere/
 │   ├── devices/                status of all devices
 │   │   └── cpu/                cpu.Source interface, source selection
 │   │       └── rapl/           RAPL zones and rapl.Source
+│   ├── host/                   host-level data and energy attribution
+│   │   ├── attribution/        active/idle/process energy split (--pid)
+│   │   └── proc/               CPU time from /proc (host active/idle, per process)
 │   └── utils/                  small helpers (ReadUint)
 ├── assets/logo.svg
 └── Makefile
@@ -171,7 +212,7 @@ anywhere, including CI and machines without RAPL.
 - [x] `status`: list energy sources and RAPL zones
 - [x] `--version` with build info
 - [x] `measure`: whole-CPU energy and power over an interval
-- [ ] `pid <pid>`: energy of one process over an interval
+- [x] `measure --pid <pid>`: energy of one process over an interval, active/idle per zone
 - [ ] Measured idle baseline as an alternative to the time-based split
 - [ ] Containers and pods via cgroup v2
 - [ ] More sources: hwmon, BMC/Redfish wall power
