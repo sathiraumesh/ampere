@@ -8,6 +8,12 @@ import (
 
 // Helpers fakeZone and fakePowercap are in zones_test.go (same package).
 
+func TestSourceDevice(t *testing.T) {
+	if got := (&Source{}).Device(); got != "cpu" {
+		t.Errorf("Device() = %q, want cpu", got)
+	}
+}
+
 func TestSourceName(t *testing.T) {
 	if got := (&Source{}).Name(); got != "rapl" {
 		t.Errorf("Name() = %q, want rapl", got)

@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"io"
+	"strings"
 	"text/tabwriter"
 
 	"sathiraumesh/ampere/internal/devices"
@@ -11,55 +13,75 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// deviceStatus gathers the device report. It is a variable so tests can
-// replace it with a fake report instead of reading the real machine.
-var deviceStatus = devices.Status
+// deviceStatus gathers every energy source of every device. This list is
+// the one place where device types are wired in; add e.g. gpu.Status()
+// here later. It is a variable so tests can replace it with a fake report.
+var deviceStatus = func() devices.Report {
+	var sources []devices.Source
+	sources = append(sources, cpu.Status()...)
+	//TODO: sources = append(sources, gpu.Status()...)
+	return devices.Report{Sources: sources}
+}
 
-// statusCommand builds "ampere status": check which energy and CPU sources
-// are available on this machine.
+// statusCommand builds "ampere status": check which energy sources are
+// available for every device on this machine.
 func statusCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Check which energy and CPU-time sources are available",
+		Short: "Check which energy sources are available for each device",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-
-			report := deviceStatus()
 			out := cmd.OutOrStdout()
+			report := deviceStatus()
 
-			fmt.Fprintln(out, "CPU energy sources:")
-			for _, s := range report.CPU.Sources {
-				if !cpu.Available(s) {
-					fmt.Fprintf(out, " %s: %v\n", s.Name(), s.Err())
-					continue
-				}
-				// Details depend on the concrete implementation.
-				switch src := s.(type) {
-				case *rapl.Source:
-					fmt.Fprintf(out, " %s (%d zones)\n", s.Name(), len(src.Zones))
-					w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-					fmt.Fprintln(w, "      ID\tNAME\tPARENT\tMAX (µJ)\tREADABLE")
-					for _, z := range src.Zones {
-						parent := z.ParentID
-						if parent == "" {
-							parent = "-"
-						}
-						fmt.Fprintf(w, "      %s\t%s\t%s\t%d\t%v\n",
-							z.ID, z.Name, parent, z.MaxEnergyRangeUJ, z.Readable())
-					}
-					w.Flush()
-				default:
-					// A source without a details printer yet: show just the name.
-					fmt.Fprintf(out, " %s\n", s.Name())
-				}
+			types := report.Types()
+			if len(types) == 0 {
+				fmt.Fprintln(out, "No energy sources found.")
+				return nil
 			}
-
-			if p := report.CPU.Preferred(); p != nil {
-				fmt.Fprintln(out, "Using:", p.Name())
-			} else {
-				fmt.Fprintln(out, "Using: none (no CPU energy source available)")
+			for i, device := range types {
+				if i > 0 {
+					fmt.Fprintln(out)
+				}
+				printDevice(out, device, report)
 			}
 			return nil
 		},
+	}
+}
+
+// printDevice prints one device: its sources and which one will be used.
+func printDevice(out io.Writer, device string, report devices.Report) {
+	fmt.Fprintf(out, "%s energy sources:\n", strings.ToUpper(device))
+	for _, s := range report.For(device) {
+		if !devices.Available(s) {
+			fmt.Fprintf(out, " %s: %v\n", s.Name(), s.Err())
+			continue
+		}
+		// Details depend on the concrete implementation.
+		switch src := s.(type) {
+		case *rapl.Source:
+			fmt.Fprintf(out, " %s (%d zones)\n", s.Name(), len(src.Zones))
+			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "      ID\tNAME\tPARENT\tMAX (µJ)\tREADABLE")
+			for _, z := range src.Zones {
+				parent := z.ParentID
+				if parent == "" {
+					parent = "-"
+				}
+				fmt.Fprintf(w, "      %s\t%s\t%s\t%d\t%v\n",
+					z.ID, z.Name, parent, z.MaxEnergyRangeUJ, z.Readable())
+			}
+			w.Flush()
+		default:
+			// A source without a details printer yet: show just the name.
+			fmt.Fprintf(out, " %s\n", s.Name())
+		}
+	}
+
+	if p := report.Preferred(device); p != nil {
+		fmt.Fprintln(out, "Using:", p.Name())
+	} else {
+		fmt.Fprintf(out, "Using: none (no %s energy source available)\n", device)
 	}
 }

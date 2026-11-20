@@ -6,28 +6,33 @@ import (
 	"testing"
 
 	"sathiraumesh/ampere/internal/devices"
-	"sathiraumesh/ampere/internal/devices/cpu"
 	"sathiraumesh/ampere/internal/devices/cpu/rapl"
 )
 
-// fakeSource is a cpu.Source that is not RAPL, to test the generic output.
+// fakeSource is a source that is not RAPL, to test the generic output.
+// Its device is "cpu" unless dev is set.
 type fakeSource struct {
 	name string
 	err  error
+	dev  string
 }
 
-func (f fakeSource) Name() string          { return f.name }
+func (f fakeSource) Name() string { return f.name }
+func (f fakeSource) Device() string {
+	if f.dev == "" {
+		return devices.CPU
+	}
+	return f.dev
+}
 func (f fakeSource) Err() error            { return f.err }
 func (f fakeSource) Read() (uint64, error) { return 0, f.err }
 
-// withSources makes "ampere status" see the given CPU sources for one test.
-func withSources(t *testing.T, sources ...cpu.Source) {
+// withSources makes the commands see the given sources for one test.
+func withSources(t *testing.T, sources ...devices.Source) {
 	t.Helper()
 	old := deviceStatus
 	t.Cleanup(func() { deviceStatus = old })
-	deviceStatus = func() devices.Report {
-		return devices.Report{CPU: cpu.Report{Sources: sources}}
-	}
+	deviceStatus = func() devices.Report { return devices.Report{Sources: sources} }
 }
 
 // assertContains fails for every want that is not in got.
@@ -91,7 +96,7 @@ func TestStatusUnavailable(t *testing.T) {
 
 	assertContains(t, out,
 		"rapl: no intel-rapl zones",
-		"Using: none (no CPU energy source available)",
+		"Using: none (no cpu energy source available)",
 	)
 }
 
@@ -121,7 +126,7 @@ func TestStatusNoSources(t *testing.T) {
 
 	out := run(t, "status")
 
-	assertContains(t, out, "CPU energy sources:", "Using: none")
+	assertContains(t, out, "No energy sources found.")
 }
 
 func TestStatusRejectsArgs(t *testing.T) {
@@ -133,5 +138,25 @@ func TestStatusRejectsArgs(t *testing.T) {
 	cmd.SetArgs([]string{"status", "extra"})
 	if err := cmd.Execute(); err == nil {
 		t.Error(`"ampere status extra" should fail: status takes no arguments`)
+	}
+}
+
+func TestStatusAllDevices(t *testing.T) {
+	withSources(t,
+		laptopRAPL(),
+		fakeSource{name: "nvml", dev: "gpu"},
+		fakeSource{name: "rapl-dram", dev: "dram", err: errors.New("no zone")},
+	)
+
+	out := run(t, "status")
+
+	assertContains(t, out,
+		"CPU energy sources:", " rapl (2 zones)", "Using: rapl",
+		"GPU energy sources:", " nvml\n", "Using: nvml",
+		"DRAM energy sources:", "rapl-dram: no zone",
+		"Using: none (no dram energy source available)",
+	)
+	if strings.Index(out, "CPU") > strings.Index(out, "GPU") {
+		t.Errorf("devices should print in order cpu, gpu, dram:\n%s", out)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"sathiraumesh/ampere/internal/devices"
 	"sathiraumesh/ampere/internal/utils"
 )
 
@@ -19,6 +20,9 @@ func NewSource() *Source {
 	zones, err := Status()
 	return &Source{Zones: zones, err: err}
 }
+
+// Device returns "cpu": RAPL measures the CPU package.
+func (s *Source) Device() string { return devices.CPU }
 
 // Name identifies this implementation.
 func (s *Source) Name() string { return "rapl" }
@@ -50,7 +54,7 @@ func (s *Source) Read() (uint64, error) {
 
 		cur, err := utils.ReadUint(filepath.Join(z.Path, "energy_uj"))
 		if err != nil {
-			return 0, fmt.Errorf("rapl %s: %w", z.ID, err) // e.g. permission denied
+			return 0, fmt.Errorf("%s: %w", z.ID, err) // e.g. permission denied
 		}
 		sum += cur
 	}

@@ -22,8 +22,8 @@ It combines two kernel sources:
 process energy = CPU energy (RAPL) × process CPU time / busy CPU time
 ```
 
-> Status: early development. `ampere status` works; per-process energy
-> (`ampere pid`) is in progress.
+> Status: early development. `ampere status` and `ampere read` work;
+> per-process energy (`ampere pid`) is in progress.
 
 ## Requirements
 
@@ -75,6 +75,25 @@ Using: rapl
 | PARENT | zone this one is nested in; its energy is already in the parent |
 | MAX (µJ) | value where `energy_uj` wraps back to 0 |
 | READABLE | `energy_uj` can be read (needs root) |
+
+### Read CPU energy and power
+
+```bash
+sudo ./bin/ampere read                 # over 1 s
+sudo ./bin/ampere read --interval 5s   # over 5 s
+sudo ./bin/ampere read --source rapl   # force a source (default: first available)
+make read-root                         # same, builds first
+```
+
+```text
+source:    rapl
+interval:  1.000213 s
+energy:    12.345678 J
+power:     12.34 W
+```
+
+`read` takes two readings of the preferred source, `--interval` apart.
+If the counter wraps to 0 between them, it reports an error; run it again.
 
 ## How it works
 
@@ -137,6 +156,7 @@ anywhere, including CI and machines without RAPL.
 
 - [x] `status`: list energy sources and RAPL zones
 - [x] `--version` with build info
+- [x] `read`: whole-CPU energy and power over an interval
 - [ ] `pid <pid>`: energy of one process over an interval
 - [ ] Measured idle baseline as an alternative to the time-based split
 - [ ] Containers and pods via cgroup v2
