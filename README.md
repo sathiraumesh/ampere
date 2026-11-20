@@ -22,7 +22,7 @@ It combines two kernel sources:
 process energy = CPU energy (RAPL) × process CPU time / busy CPU time
 ```
 
-> Status: early development. `ampere status` and `ampere read` work;
+> Status: early development. `ampere status` and `ampere measure` work;
 > per-process energy (`ampere pid`) is in progress.
 
 ## Requirements
@@ -79,11 +79,12 @@ Using: rapl
 ### Read CPU energy and power
 
 ```bash
-sudo ./bin/ampere read                 # over 1 s
-sudo ./bin/ampere read --interval 5s   # over 5 s
-sudo ./bin/ampere read --source rapl   # force a source (default: first available)
-sudo ./bin/ampere read -o json         # JSON instead of a table
-make read-root                         # same, builds first
+sudo ./bin/ampere measure                 # over 1 s
+sudo ./bin/ampere measure --interval 5s   # over 5 s
+sudo ./bin/ampere measure -i 1s -n 20     # 20 samples, 1 s each, back to back
+sudo ./bin/ampere measure --source rapl   # force a source (default: first available)
+sudo ./bin/ampere measure -o json         # JSON instead of a table
+make measure-root                         # same, builds first
 ```
 
 ```text
@@ -95,15 +96,18 @@ With `-o json`, each sample is one JSON object per line (JSON Lines), so
 repeated runs can be appended to a file:
 
 ```bash
-sudo ./bin/ampere read -o json -f samples.jsonl   # appends one line per run
+sudo ./bin/ampere measure -o json -f samples.jsonl   # appends one line per run
 ```
 
 ```json
 {"device":"cpu","source":"rapl","start":"2026-11-20T10:00:00Z","end":"2026-11-20T10:00:01.000213Z","interval_s":1.000213,"energy_j":12.345678,"power_w":12.34}
 ```
 
-`read` takes two readings of the preferred source, `--interval` apart.
-If the counter wraps to 0 between them, it reports an error; run it again.
+`measure` takes two readings of the preferred source, `--interval` apart.
+With `--count N` it takes N samples in a row: each one starts at the
+previous one's end reading, so there are no gaps between them. The table
+header is printed once; with `-f`, every sample is appended as it is taken.
+If the counter wraps to 0 during a sample, it reports an error; run it again.
 
 ## How it works
 
@@ -166,7 +170,7 @@ anywhere, including CI and machines without RAPL.
 
 - [x] `status`: list energy sources and RAPL zones
 - [x] `--version` with build info
-- [x] `read`: whole-CPU energy and power over an interval
+- [x] `measure`: whole-CPU energy and power over an interval
 - [ ] `pid <pid>`: energy of one process over an interval
 - [ ] Measured idle baseline as an alternative to the time-based split
 - [ ] Containers and pods via cgroup v2

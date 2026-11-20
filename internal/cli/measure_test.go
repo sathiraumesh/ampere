@@ -55,10 +55,10 @@ func fakeClock(t *testing.T) *[]time.Duration {
 	return &slept
 }
 
-// readSample runs "ampere read <args> -o json" and decodes the sample.
-func readSample(t *testing.T, args ...string) devices.Sample {
+// measureSample runs "ampere measure <args> -o json" and decodes the sample.
+func measureSample(t *testing.T, args ...string) devices.Sample {
 	t.Helper()
-	out := run(t, append(append([]string{"read"}, args...), "-o", "json")...)
+	out := run(t, append(append([]string{"measure"}, args...), "-o", "json")...)
 	var s devices.Sample
 	if err := json.Unmarshal([]byte(out), &s); err != nil {
 		t.Fatalf("output is not JSON: %v\n%s", err, out)
@@ -77,12 +77,12 @@ func runErr(args ...string) (string, error) {
 	return out.String(), err
 }
 
-func TestReadPower(t *testing.T) {
+func TestMeasurePower(t *testing.T) {
 	slept := fakeClock(t)
 	src := &counterSource{readings: []uint64{1_000_000, 13_000_000}} // +12 J
 	withSources(t, src)
 
-	got := readSample(t)
+	got := measureSample(t)
 
 	want := devices.Sample{
 		Device:    "cpu",
@@ -104,34 +104,34 @@ func TestReadPower(t *testing.T) {
 	}
 }
 
-func TestReadInterval(t *testing.T) {
+func TestMeasureInterval(t *testing.T) {
 	fakeClock(t)
 	withSources(t, &counterSource{readings: []uint64{0, 50_000_000}}) // 50 J
 
-	got := readSample(t, "--interval", "5s")
+	got := measureSample(t, "--interval", "5s")
 
 	if got.IntervalS != 5 || got.EnergyJ != 50 || got.PowerW != 10 {
 		t.Errorf("sample = %+v, want 5 s, 50 J, 10 W", got)
 	}
 }
 
-func TestReadUsesPreferredSource(t *testing.T) {
+func TestMeasureUsesPreferredSource(t *testing.T) {
 	fakeClock(t)
 	withSources(t,
 		fakeSource{name: "rapl", err: errors.New("not here")}, // unavailable
 		&counterSource{readings: []uint64{0, 1_000_000}},      // used
 	)
 
-	if got := readSample(t); got.Source != "fake" {
+	if got := measureSample(t); got.Source != "fake" {
 		t.Errorf("source = %q, want fake", got.Source)
 	}
 }
 
-func TestReadTable(t *testing.T) {
+func TestMeasureTable(t *testing.T) {
 	fakeClock(t)
 	withSources(t, &counterSource{readings: []uint64{1_000_000, 13_000_000}})
 
-	out := run(t, "read") // table is the default
+	out := run(t, "measure") // table is the default
 
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) != 2 {
@@ -146,11 +146,11 @@ func TestReadTable(t *testing.T) {
 	}
 }
 
-func TestReadJSONIsOneLine(t *testing.T) {
+func TestMeasureJSONIsOneLine(t *testing.T) {
 	fakeClock(t)
 	withSources(t, &counterSource{readings: []uint64{0, 1_000_000}})
 
-	out := run(t, "read", "-o", "json")
+	out := run(t, "measure", "-o", "json")
 
 	if strings.Count(out, "\n") != 1 || !strings.HasSuffix(out, "}\n") {
 		t.Errorf("want one JSON object per line, got:\n%s", out)
@@ -163,59 +163,59 @@ func TestReadJSONIsOneLine(t *testing.T) {
 	}
 }
 
-func TestReadBadOutput(t *testing.T) {
+func TestMeasureBadOutput(t *testing.T) {
 	fakeClock(t)
 	withSources(t, &counterSource{readings: []uint64{0, 1}})
 
-	_, err := runErr("read", "-o", "xml")
+	_, err := runErr("measure", "-o", "xml")
 	if err == nil || !strings.Contains(err.Error(), "--output") {
 		t.Errorf("err = %v, want --output error", err)
 	}
 }
 
-func TestReadNoSource(t *testing.T) {
+func TestMeasureNoSource(t *testing.T) {
 	fakeClock(t)
 	withSources(t, fakeSource{name: "rapl", err: errors.New("not here")})
 
-	_, err := runErr("read")
+	_, err := runErr("measure")
 	if err == nil || !strings.Contains(err.Error(), "no cpu energy source") {
 		t.Errorf("err = %v, want no-source error", err)
 	}
 }
 
-func TestReadPermissionError(t *testing.T) {
+func TestMeasurePermissionError(t *testing.T) {
 	fakeClock(t)
 	withSources(t, &counterSource{readErr: errors.New("permission denied")})
 
-	_, err := runErr("read")
+	_, err := runErr("measure")
 	if err == nil || !strings.Contains(err.Error(), "permission denied") ||
 		!strings.Contains(err.Error(), "sudo") {
 		t.Errorf("err = %v, want permission error with sudo hint", err)
 	}
 }
 
-func TestReadWraparound(t *testing.T) {
+func TestMeasureWraparound(t *testing.T) {
 	fakeClock(t)
 	withSources(t, &counterSource{readings: []uint64{65_000_000_000, 100}})
 
-	_, err := runErr("read")
+	_, err := runErr("measure")
 	if err == nil || !strings.Contains(err.Error(), "wrapped") {
 		t.Errorf("err = %v, want wraparound error", err)
 	}
 }
 
-func TestReadBadInterval(t *testing.T) {
+func TestMeasureBadInterval(t *testing.T) {
 	fakeClock(t)
 	withSources(t, &counterSource{readings: []uint64{0, 0}})
 
 	for _, iv := range []string{"0s", "-1s"} {
-		if _, err := runErr("read", "--interval", iv); err == nil {
-			t.Errorf("read --interval %s: want error", iv)
+		if _, err := runErr("measure", "--interval", iv); err == nil {
+			t.Errorf("measure --interval %s: want error", iv)
 		}
 	}
 }
 
-func TestReadChooseSource(t *testing.T) {
+func TestMeasureChooseSource(t *testing.T) {
 	fakeClock(t)
 	chosen := &counterSource{readings: []uint64{0, 2_000_000}}
 	withSources(t,
@@ -223,28 +223,28 @@ func TestReadChooseSource(t *testing.T) {
 		namedSource{chosen, "hwmon"},
 	)
 
-	got := readSample(t, "--source", "hwmon")
+	got := measureSample(t, "--source", "hwmon")
 
 	if got.Source != "hwmon" || got.EnergyJ != 2 {
 		t.Errorf("sample = %+v, want hwmon, 2 J", got)
 	}
 }
 
-func TestReadChooseUnknownSource(t *testing.T) {
+func TestMeasureChooseUnknownSource(t *testing.T) {
 	fakeClock(t)
 	withSources(t, &counterSource{readings: []uint64{0, 1}})
 
-	_, err := runErr("read", "-s", "gpu")
+	_, err := runErr("measure", "-s", "gpu")
 	if err == nil || !strings.Contains(err.Error(), "unknown cpu source") {
 		t.Errorf("err = %v, want unknown source", err)
 	}
 }
 
-func TestReadChooseUnavailableSource(t *testing.T) {
+func TestMeasureChooseUnavailableSource(t *testing.T) {
 	fakeClock(t)
 	withSources(t, fakeSource{name: "rapl", err: errors.New("no zones")})
 
-	_, err := runErr("read", "--source", "rapl")
+	_, err := runErr("measure", "--source", "rapl")
 	if err == nil || !strings.Contains(err.Error(), "not available") {
 		t.Errorf("err = %v, want not available", err)
 	}
@@ -258,37 +258,37 @@ type namedSource struct {
 
 func (n namedSource) Name() string { return n.name }
 
-func TestReadOtherDevice(t *testing.T) {
+func TestMeasureOtherDevice(t *testing.T) {
 	fakeClock(t)
 	withSources(t,
 		&counterSource{readings: []uint64{0, 9_000_000}},
 		&counterSource{readings: []uint64{0, 3_000_000}, dev: "gpu"},
 	)
 
-	got := readSample(t, "--device", "gpu")
+	got := measureSample(t, "--device", "gpu")
 
 	if got.Device != "gpu" || got.EnergyJ != 3 {
 		t.Errorf("sample = %+v, want gpu, 3 J", got)
 	}
 }
 
-func TestReadUnknownDevice(t *testing.T) {
+func TestMeasureUnknownDevice(t *testing.T) {
 	fakeClock(t)
 	withSources(t, &counterSource{readings: []uint64{0, 1}})
 
-	_, err := runErr("read", "-d", "gpu")
+	_, err := runErr("measure", "-d", "gpu")
 	if err == nil || !strings.Contains(err.Error(), `unknown device "gpu" (known: cpu)`) {
 		t.Errorf("err = %v, want unknown device", err)
 	}
 }
 
-func TestReadToFileJSON(t *testing.T) {
+func TestMeasureToFileJSON(t *testing.T) {
 	fakeClock(t)
 	path := filepath.Join(t.TempDir(), "samples.jsonl")
 
 	for i := 0; i < 2; i++ {
 		withSources(t, &counterSource{readings: []uint64{0, 1_000_000}})
-		if out := run(t, "read", "-o", "json", "-f", path); out != "" {
+		if out := run(t, "measure", "-o", "json", "-f", path); out != "" {
 			t.Errorf("with --file nothing should be printed, got %q", out)
 		}
 	}
@@ -309,13 +309,13 @@ func TestReadToFileJSON(t *testing.T) {
 	}
 }
 
-func TestReadToFileTableHeaderOnce(t *testing.T) {
+func TestMeasureToFileTableHeaderOnce(t *testing.T) {
 	fakeClock(t)
 	path := filepath.Join(t.TempDir(), "samples.txt")
 
 	for i := 0; i < 3; i++ {
 		withSources(t, &counterSource{readings: []uint64{0, 1_000_000}})
-		run(t, "read", "-f", path)
+		run(t, "measure", "-f", path)
 	}
 
 	data, err := os.ReadFile(path)
@@ -330,11 +330,11 @@ func TestReadToFileTableHeaderOnce(t *testing.T) {
 	}
 }
 
-func TestReadToFileBadPath(t *testing.T) {
+func TestMeasureToFileBadPath(t *testing.T) {
 	fakeClock(t)
 	withSources(t, &counterSource{readings: []uint64{0, 1}})
 
-	_, err := runErr("read", "-f", filepath.Join(t.TempDir(), "no-such-dir", "x.jsonl"))
+	_, err := runErr("measure", "-f", filepath.Join(t.TempDir(), "no-such-dir", "x.jsonl"))
 	if err == nil {
 		t.Error("want an error for a file in a missing folder")
 	}
@@ -369,11 +369,11 @@ func laptopZones() *zoneSource {
 	}
 }
 
-func TestReadZonesByDefaultJSON(t *testing.T) {
+func TestMeasureZonesByDefaultJSON(t *testing.T) {
 	fakeClock(t)
 	withSources(t, laptopZones())
 
-	got := readSample(t)
+	got := measureSample(t)
 
 	want := []devices.ZoneSample{
 		{ID: "intel-rapl:0", Name: "package-0", EnergyJ: 12, PowerW: 12},
@@ -384,11 +384,11 @@ func TestReadZonesByDefaultJSON(t *testing.T) {
 	}
 }
 
-func TestReadZonesSeparateTable(t *testing.T) {
+func TestMeasureZonesSeparateTable(t *testing.T) {
 	fakeClock(t)
 	withSources(t, laptopZones())
 
-	out := run(t, "read")
+	out := run(t, "measure")
 
 	parts := strings.Split(strings.TrimSpace(out), "\n\n")
 	if len(parts) != 2 {
@@ -402,16 +402,115 @@ func TestReadZonesSeparateTable(t *testing.T) {
 	}
 }
 
-func TestReadNoZonesForPlainSource(t *testing.T) {
+func TestMeasureNoZonesForPlainSource(t *testing.T) {
 	fakeClock(t)
 	withSources(t, &counterSource{readings: []uint64{0, 1_000_000}})
 
-	if got := readSample(t); got.Zones != nil {
+	if got := measureSample(t); got.Zones != nil {
 		t.Errorf("source without zones: Zones = %+v, want nil", got.Zones)
 	}
 	withSources(t, &counterSource{readings: []uint64{0, 1_000_000}}) // fresh readings
-	out := run(t, "read", "-o", "json")
+	out := run(t, "measure", "-o", "json")
 	if strings.Contains(out, "zones") {
 		t.Errorf(`JSON should omit "zones" when there are none: %s`, out)
+	}
+}
+
+func TestMeasureCountJSON(t *testing.T) {
+	slept := fakeClock(t)
+	// 4 readings → 3 back-to-back samples: +1 J, +2 J, +3 J.
+	src := &counterSource{readings: []uint64{0, 1_000_000, 3_000_000, 6_000_000}}
+	withSources(t, src)
+
+	out := run(t, "measure", "-n", "3", "-o", "json")
+
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("want 3 JSON lines, got %d:\n%s", len(lines), out)
+	}
+	start := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	for i, l := range lines {
+		var s devices.Sample
+		if err := json.Unmarshal([]byte(l), &s); err != nil {
+			t.Fatalf("line %d not JSON: %v", i, err)
+		}
+		if want := float64(i + 1); s.EnergyJ != want {
+			t.Errorf("sample %d: energy = %g J, want %g", i, s.EnergyJ, want)
+		}
+		// No gaps: each sample starts where the previous one ended.
+		wantStart := start.Add(time.Duration(i) * time.Second)
+		if !s.Start.Equal(wantStart) || !s.End.Equal(wantStart.Add(time.Second)) {
+			t.Errorf("sample %d: %v → %v, want %v → +1s", i, s.Start, s.End, wantStart)
+		}
+	}
+	if len(*slept) != 3 || src.calls != 4 {
+		t.Errorf("slept %d times, read %d times; want 3 sleeps, 4 reads", len(*slept), src.calls)
+	}
+}
+
+func TestMeasureCountTableHeaderOnce(t *testing.T) {
+	fakeClock(t)
+	withSources(t, &counterSource{readings: []uint64{0, 1_000_000, 2_000_000, 3_000_000}})
+
+	out := run(t, "measure", "--count", "3")
+
+	if n := strings.Count(out, "DEVICE"); n != 1 {
+		t.Errorf("header written %d times, want 1:\n%s", n, out)
+	}
+	if n := strings.Count(out, "cpu"); n != 3 {
+		t.Errorf("want 3 rows, got %d:\n%s", n, out)
+	}
+}
+
+func TestMeasureCountToFile(t *testing.T) {
+	fakeClock(t)
+	path := filepath.Join(t.TempDir(), "samples.jsonl")
+	withSources(t, &counterSource{readings: []uint64{0, 1, 2, 3, 4, 5}})
+
+	run(t, "measure", "-n", "5", "-o", "json", "-f", path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), "\n"); n != 5 {
+		t.Errorf("want 5 lines in file, got %d:\n%s", n, data)
+	}
+}
+
+func TestMeasureCountZones(t *testing.T) {
+	fakeClock(t)
+	src := laptopZones()
+	src.readings = append(src.readings, 20_000_000)
+	src.zoneReadings = append(src.zoneReadings, []devices.ZoneReading{
+		{ID: "intel-rapl:0", Name: "package-0", EnergyUJ: 20_000_000},
+		{ID: "intel-rapl:0:0", Name: "core", ParentID: "intel-rapl:0", EnergyUJ: 9_000_000},
+	})
+	withSources(t, src)
+
+	out := run(t, "measure", "-n", "2", "-o", "json")
+
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want 2 lines, got:\n%s", out)
+	}
+	var s devices.Sample
+	if err := json.Unmarshal([]byte(lines[1]), &s); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Zones) != 2 || s.Zones[0].EnergyJ != 8 || s.Zones[1].EnergyJ != 4 {
+		t.Errorf("second sample zones = %+v, want package 8 J, core 4 J", s.Zones)
+	}
+}
+
+func TestMeasureBadCount(t *testing.T) {
+	fakeClock(t)
+	withSources(t, &counterSource{readings: []uint64{0, 1}})
+
+	for _, n := range []string{"0", "-1"} {
+		_, err := runErr("measure", "--count", n)
+		if err == nil || !strings.Contains(err.Error(), "--count") {
+			t.Errorf("measure --count %s: err = %v, want --count error", n, err)
+		}
 	}
 }

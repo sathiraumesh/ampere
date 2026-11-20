@@ -15,7 +15,7 @@ LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION) \
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build run version read-root status status-root fmt vet test tidy check clean
+.PHONY: help build run version measure-root status status-root fmt vet test tidy check clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | \
@@ -31,8 +31,8 @@ run: build ## Run ampere with ARGS, e.g. make run ARGS="pid 1234 -i 2s"
 version: build ## Print version and build info
 	./$(BIN_DIR)/$(BINARY) --version
 
-read-root: build ## Read CPU energy and power as root, e.g. make read-root ARGS="-i 5s"
-	sudo ./$(BIN_DIR)/$(BINARY) read $(ARGS)
+measure-root: build ## Measure CPU energy and power as root, e.g. make measure-root ARGS="-i 5s"
+	sudo ./$(BIN_DIR)/$(BINARY) measure $(ARGS)
 
 status: build ## Check available energy/CPU sources (as normal user)
 	./$(BIN_DIR)/$(BINARY) status

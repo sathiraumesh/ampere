@@ -40,7 +40,7 @@ time from /proc to estimate how much energy each process uses.`,
 
 	root.AddCommand(
 		statusCommand(),
-		readCommand(),
+		measureCommand(),
 	)
 
 	return root
