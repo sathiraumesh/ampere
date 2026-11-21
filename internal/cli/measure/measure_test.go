@@ -12,7 +12,7 @@ import (
 
 	"sathiraumesh/ampere/internal/devices"
 	"sathiraumesh/ampere/internal/devices/cpu/rapl"
-	"sathiraumesh/ampere/internal/energy"
+	"sathiraumesh/ampere/internal/host/attribution/energy"
 )
 
 // counterSource is a source that returns the given readings in order.

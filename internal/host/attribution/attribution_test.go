@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"sathiraumesh/ampere/internal/devices/cpu/rapl"
-	"sathiraumesh/ampere/internal/energy"
+	"sathiraumesh/ampere/internal/host/attribution/energy"
 	"sathiraumesh/ampere/internal/host/proc"
 )
 

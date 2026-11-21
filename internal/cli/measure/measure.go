@@ -12,7 +12,7 @@ import (
 	"sathiraumesh/ampere/internal/devices"
 	"sathiraumesh/ampere/internal/devices/cpu/rapl"
 	"sathiraumesh/ampere/internal/devices/registry"
-	"sathiraumesh/ampere/internal/energy"
+	"sathiraumesh/ampere/internal/host/attribution/energy"
 	"sathiraumesh/ampere/internal/output"
 )
 
@@ -37,8 +37,8 @@ type measureOptions struct {
 
 // Command builds "ampere measure": measure a device's energy and power over
 // an interval, using its preferred source or the one chosen with --source.
-// Its subcommands "process" and "container" also split that energy into
-// active, idle and the target's share (see target.go).
+// Its subcommands "process" and "container" give one target's share of
+// that energy (shared code in helpers.go).
 func Command() *cobra.Command {
 	var opts measureOptions
 

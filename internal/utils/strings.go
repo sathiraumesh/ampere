@@ -4,6 +4,10 @@ package utils
 
 import "strings"
 
+// ContainerIDLen is the length of a full container ID (64 hex characters)
+// for Docker, Podman and containerd (Kubernetes CRI and nerdctl).
+const ContainerIDLen = 64
+
 // CutAffix returns s without prefix and suffix, and whether s had both.
 // If it does not, it returns "", false. The suffix may be "" (only the
 // prefix is needed then).
@@ -30,10 +34,6 @@ func IsHex(s string) bool {
 	}
 	return true
 }
-
-// ContainerIDLen is the length of a full container ID (64 hex characters)
-// for Docker, Podman and containerd (Kubernetes CRI and nerdctl).
-const ContainerIDLen = 64
 
 // IsContainerID reports whether s is a full container ID: exactly
 // ContainerIDLen lowercase hex digits.

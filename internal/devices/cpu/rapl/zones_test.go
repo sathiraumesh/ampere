@@ -6,50 +6,6 @@ import (
 	"testing"
 )
 
-// fakeZone describes one zone folder in a fake powercap tree.
-// An empty energy means the energy_uj file is not created.
-type fakeZone struct {
-	id, name, energy, max string
-}
-
-// fakePowercap builds a fake /sys/class/powercap in a temp dir:
-//
-//	intel-rapl/        control type (no files, must be skipped)
-//	dtpm/              unrelated powercap entry (must be skipped)
-//	<zone.id>/name, energy_uj, max_energy_range_uj
-func fakePowercap(t *testing.T, zones ...fakeZone) string {
-	t.Helper()
-	root := t.TempDir()
-	for _, d := range []string{"intel-rapl", "dtpm"} {
-		if err := os.Mkdir(filepath.Join(root, d), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, z := range zones {
-		dir := filepath.Join(root, z.id)
-		if err := os.Mkdir(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		write := func(file, content string) {
-			if err := os.WriteFile(filepath.Join(dir, file), []byte(content+"\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-		write("name", z.name)
-		write("max_energy_range_uj", z.max)
-		if z.energy != "" {
-			write("energy_uj", z.energy)
-		}
-	}
-	return root
-}
-
-// singlePackage is a single-socket layout: one package with a core subzone.
-var singlePackage = []fakeZone{
-	{"intel-rapl:0", "package-0", "1000", "65532610987"},
-	{"intel-rapl:0:0", "core", "400", "65532610987"},
-}
-
 func TestParentID(t *testing.T) {
 	tests := []struct{ id, want string }{
 		{"intel-rapl:0", ""},
@@ -66,7 +22,7 @@ func TestParentID(t *testing.T) {
 }
 
 func TestStatusAt(t *testing.T) {
-	root := fakePowercap(t, singlePackage...)
+	root := fakePowercap(t, serverZones...)
 
 	zones, err := statusAt(root)
 	if err != nil {
@@ -74,34 +30,45 @@ func TestStatusAt(t *testing.T) {
 	}
 
 	// intel-rapl (control type) and dtpm must be skipped.
-	if len(zones) != 2 {
-		t.Fatalf("got %d zones, want 2: %+v", len(zones), zones)
+	if len(zones) != len(serverZones) {
+		t.Fatalf("got %d zones, want %d: %+v", len(zones), len(serverZones), zones)
 	}
 
-	byID := map[string]Zone{}
+	want := map[string]struct {
+		name, parent string
+		max          uint64
+	}{
+		"intel-rapl:0":   {"package-0", "", 262143328850},
+		"intel-rapl:0:0": {"core", "intel-rapl:0", 262143328850},
+		"intel-rapl:0:1": {"uncore", "intel-rapl:0", 262143328850},
+		"intel-rapl:0:2": {"dram", "intel-rapl:0", 65712999613},
+		"intel-rapl:1":   {"package-1", "", 262143328850},
+		"intel-rapl:1:0": {"core", "intel-rapl:1", 262143328850},
+		"intel-rapl:1:1": {"dram", "intel-rapl:1", 65712999613},
+		"intel-rapl:2":   {"psys", "", 262143328850},
+	}
 	for _, z := range zones {
-		byID[z.ID] = z
+		w, ok := want[z.ID]
+		if !ok {
+			t.Errorf("unexpected zone %s", z.ID)
+			continue
+		}
+		delete(want, z.ID)
+		if z.Name != w.name || z.ParentID != w.parent || z.MaxEnergyRangeUJ != w.max {
+			t.Errorf("%s = %s/%q/%d, want %s/%q/%d", z.ID, z.Name, z.ParentID, z.MaxEnergyRangeUJ, w.name, w.parent, w.max)
+		}
+		if z.IsSubzone() != (w.parent != "") {
+			t.Errorf("%s: IsSubzone = %v", z.ID, z.IsSubzone())
+		}
+		if z.Path != filepath.Join(root, z.ID) {
+			t.Errorf("%s: Path = %q", z.ID, z.Path)
+		}
+		if !z.Readable() {
+			t.Errorf("%s should be readable: %v", z.ID, z.EnergyErr)
+		}
 	}
-
-	pkg, core := byID["intel-rapl:0"], byID["intel-rapl:0:0"]
-
-	if pkg.Name != "package-0" || core.Name != "core" {
-		t.Errorf("names = %q, %q; want package-0, core", pkg.Name, core.Name)
-	}
-	if pkg.ParentID != "" || pkg.IsSubzone() {
-		t.Errorf("package ParentID = %q, want top-level", pkg.ParentID)
-	}
-	if core.ParentID != "intel-rapl:0" || !core.IsSubzone() {
-		t.Errorf("core ParentID = %q, want intel-rapl:0", core.ParentID)
-	}
-	if pkg.MaxEnergyRangeUJ != 65532610987 {
-		t.Errorf("MaxEnergyRangeUJ = %d, want 65532610987", pkg.MaxEnergyRangeUJ)
-	}
-	if pkg.Path != filepath.Join(root, "intel-rapl:0") {
-		t.Errorf("Path = %q", pkg.Path)
-	}
-	if !pkg.Readable() || !core.Readable() {
-		t.Errorf("zones should be readable: %v, %v", pkg.EnergyErr, core.EnergyErr)
+	for id := range want {
+		t.Errorf("zone %s not found", id)
 	}
 }
 
@@ -128,13 +95,5 @@ func TestStatusAtNoZones(t *testing.T) {
 func TestStatusAtMissingDir(t *testing.T) {
 	if _, err := statusAt(filepath.Join(t.TempDir(), "nope")); !os.IsNotExist(err) {
 		t.Errorf("err = %v, want not-exist", err)
-	}
-}
-
-// writeEnergy overwrites energy_uj of a zone folder.
-func writeEnergy(t *testing.T, zonePath, value string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(zonePath, "energy_uj"), []byte(value+"\n"), 0o644); err != nil {
-		t.Fatal(err)
 	}
 }

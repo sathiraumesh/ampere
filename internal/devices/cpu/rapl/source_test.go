@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// Helpers fakeZone and fakePowercap are in zones_test.go (same package).
-
 func TestSourceDevice(t *testing.T) {
 	if got := (&Source{}).Device(); got != "cpu" {
 		t.Errorf("Device() = %q, want cpu", got)
@@ -153,5 +151,23 @@ func TestReadZonesErrors(t *testing.T) {
 	if _, err := (&Source{Zones: zones}).ReadZones(); err == nil ||
 		!strings.Contains(err.Error(), "intel-rapl:0") {
 		t.Errorf("unreadable zone: err = %v, want error naming the zone", err)
+	}
+}
+
+// TestReadServerLayout: on two sockets the total is package-0 + package-1
+// only. Subzones (core, uncore, dram) are inside their package and psys
+// covers more than the packages, so adding them would double count.
+func TestReadServerLayout(t *testing.T) {
+	zones, err := statusAt(fakePowercap(t, serverZones...))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := (&Source{Zones: zones}).Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 1000+2000 {
+		t.Errorf("Read() = %d µJ, want 3000 (package-0 + package-1)", got)
 	}
 }

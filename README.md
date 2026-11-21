@@ -227,9 +227,9 @@ ampere/
 │   │   ├── registry/           every energy source of every device (wired here)
 │   │   └── cpu/                cpu.Source interface, source selection
 │   │       └── rapl/           rapl.Source, RAPL zones (ZoneReader, ZoneSamples)
-│   ├── energy/                 energy.Sample: one measurement, with its zones
 │   ├── host/                   host-level data and energy attribution
 │   │   ├── attribution/        a target's share of the energy
+│   │   │   └── energy/         energy.Sample: one measurement, with its zones
 │   │   ├── cgroup/             find docker/podman/containerd containers, CPU time
 │   │   └── proc/               CPU time from /proc (host active/idle, per process)
 │   ├── output/                 tables and JSON lines, to the terminal or a file

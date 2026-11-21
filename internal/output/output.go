@@ -12,8 +12,8 @@ import (
 
 	"sathiraumesh/ampere/internal/devices"
 	"sathiraumesh/ampere/internal/devices/cpu/rapl"
-	"sathiraumesh/ampere/internal/energy"
 	"sathiraumesh/ampere/internal/host/attribution"
+	"sathiraumesh/ampere/internal/host/attribution/energy"
 )
 
 // Output formats for commands with an --output flag.

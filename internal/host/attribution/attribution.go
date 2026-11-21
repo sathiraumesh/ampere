@@ -19,7 +19,7 @@ import (
 	"errors"
 	"time"
 
-	"sathiraumesh/ampere/internal/energy"
+	"sathiraumesh/ampere/internal/host/attribution/energy"
 	"sathiraumesh/ampere/internal/host/proc"
 )
 
