@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"sathiraumesh/ampere/internal/devices"
+	"sathiraumesh/ampere/internal/devices/cpu/rapl"
 	"sathiraumesh/ampere/internal/host/attribution"
 	"sathiraumesh/ampere/internal/host/cgroup"
 	"sathiraumesh/ampere/internal/host/proc"
@@ -82,7 +82,7 @@ func TestMeasureProcessSplitsEnergy(t *testing.T) {
 
 func TestMeasureProcessZones(t *testing.T) {
 	fakeClock(t)
-	withSources(t, laptopZones()) // package 12 J, core 5 J
+	withSources(t, singlePackageZones()) // package 12 J, core 5 J
 	fakeProcReads(t,
 		[]proc.CPUTimes{{User: 0, Idle: 0}, {User: 50, Idle: 50}}, // half active
 		[]proc.ProcessTimes{worker(0), worker(10)},                // 1/5 of active
@@ -105,7 +105,7 @@ func TestMeasureProcessZones(t *testing.T) {
 
 func TestMeasureProcessTable(t *testing.T) {
 	fakeClock(t)
-	withSources(t, laptopZones())
+	withSources(t, singlePackageZones())
 	fakeProcReads(t,
 		[]proc.CPUTimes{{}, {User: 50, Idle: 50}},
 		[]proc.ProcessTimes{worker(0), worker(10)},
@@ -334,7 +334,7 @@ func TestMeasureContainer(t *testing.T) {
 
 func TestMeasureContainerTable(t *testing.T) {
 	fakeClock(t)
-	withSources(t, laptopZones())
+	withSources(t, singlePackageZones())
 	fakeContainer(t, 0, 500_000)
 	fakeProcReads(t, []proc.CPUTimes{hostTicks(0, 0), hostTicks(1, 1)}, nil)
 
@@ -438,18 +438,18 @@ func assertNoMachineColumns(t *testing.T, out string) {
 
 func TestMeasureTargetJSONHasNoMachineFields(t *testing.T) {
 	fakeClock(t)
-	withSources(t, laptopZones())
+	withSources(t, singlePackageZones())
 	fakeProcReads(t, []proc.CPUTimes{{}, {User: 50, Idle: 50}}, []proc.ProcessTimes{worker(0), worker(10)})
 
 	assertNoMachineColumns(t, run(t, "measure", "process", "7", "-o", "json"))
 }
 
-// twoSecondZones is laptopZones with a third reading, for -n 2:
+// twoSecondZones is singlePackageZones with a third reading, for -n 2:
 // second 1 uses 12 J, second 2 uses 8 J (package-0 = total each time).
 func twoSecondZones() *zoneSource {
-	z := laptopZones()
+	z := singlePackageZones()
 	z.readings = append(z.readings, 20_000_000)
-	z.zoneReadings = append(z.zoneReadings, []devices.ZoneReading{
+	z.zoneReadings = append(z.zoneReadings, []rapl.ZoneReading{
 		{ID: "intel-rapl:0", Name: "package-0", EnergyUJ: 20_000_000},
 		{ID: "intel-rapl:0:0", Name: "core", ParentID: "intel-rapl:0", EnergyUJ: 7_000_000},
 	})
@@ -519,7 +519,7 @@ func TestMeasureFileOneHeaderAcrossRuns(t *testing.T) {
 	fakeClock(t)
 	path := filepath.Join(t.TempDir(), "zones.txt")
 	for i := 0; i < 2; i++ {
-		withSources(t, laptopZones())
+		withSources(t, singlePackageZones())
 		run(t, "measure", "-f", path)
 	}
 	data, err := os.ReadFile(path)

@@ -1,4 +1,6 @@
-package utils
+// Package output writes energy samples and device status as tables or
+// JSON lines, to the terminal or appended to a file.
+package output
 
 import (
 	"encoding/json"
@@ -9,19 +11,21 @@ import (
 	"text/tabwriter"
 
 	"sathiraumesh/ampere/internal/devices"
+	"sathiraumesh/ampere/internal/devices/cpu/rapl"
+	"sathiraumesh/ampere/internal/energy"
 	"sathiraumesh/ampere/internal/host/attribution"
 )
 
 // Output formats for commands with an --output flag.
 const (
-	OutputTable = "table"
-	OutputJSON  = "json"
+	Table = "table"
+	JSON  = "json"
 )
 
 // WriteSample writes s in the given format. header controls whether the
 // table header row is written (ignored for JSON).
-func WriteSample(out io.Writer, format string, s devices.Sample, header bool) error {
-	if format == OutputJSON {
+func WriteSample(out io.Writer, format string, s energy.Sample, header bool) error {
+	if format == JSON {
 		return WriteJSON(out, s)
 	}
 	return WriteTable(out, s, header)
@@ -52,7 +56,7 @@ func AppendTo(path string, write func(w io.Writer, header bool) error) error {
 // "total" row and one row per zone, all under the same header, so many
 // samples build one table. Parent zones include their children: zone rows
 // must not be summed.
-func WriteTable(out io.Writer, s devices.Sample, header bool) error {
+func WriteTable(out io.Writer, s energy.Sample, header bool) error {
 	t := newTable(out, col("DEVICE", 6), col("SOURCE", 6), col("INTERVAL (s)", 12))
 	if len(s.Zones) > 0 {
 		t.add(zoneColumns...)
@@ -84,7 +88,7 @@ func WriteJSON(out io.Writer, v any) error {
 // format. header controls whether the table header row is written
 // (ignored for JSON).
 func WriteTargetSample(out io.Writer, format string, s attribution.Sample, header bool) error {
-	if format == OutputJSON {
+	if format == JSON {
 		return WriteJSON(out, s)
 	}
 	return WriteTargetTable(out, s, header)
@@ -150,7 +154,7 @@ func shortID(id string) string {
 }
 
 // WriteDevice prints one device for "ampere status": its energy sources,
-// the zones of sources that have them (devices.ZoneLister), and which
+// the zones of sources that have them (rapl.ZoneLister), and which
 // source will be used.
 func WriteDevice(out io.Writer, device string, report devices.Report) error {
 	fmt.Fprintf(out, "%s energy sources:\n", strings.ToUpper(device))
@@ -159,7 +163,7 @@ func WriteDevice(out io.Writer, device string, report devices.Report) error {
 			fmt.Fprintf(out, " %s: %v\n", s.Name(), s.Err())
 			continue
 		}
-		zl, ok := s.(devices.ZoneLister)
+		zl, ok := s.(rapl.ZoneLister)
 		if !ok {
 			// A source without zones: show just the name.
 			fmt.Fprintf(out, " %s\n", s.Name())

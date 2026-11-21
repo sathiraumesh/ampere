@@ -1,4 +1,4 @@
-package devices
+package rapl
 
 import (
 	"reflect"

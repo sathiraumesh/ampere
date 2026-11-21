@@ -1,3 +1,5 @@
+// Package utils holds small helpers shared by the ampere packages: reading
+// numbers from sysfs files (ReadUint) and string helpers.
 package utils
 
 import "strings"

@@ -66,18 +66,18 @@ func (s *Source) Read() (uint64, error) {
 }
 
 // ReadZones returns the current raw counter of every zone and subzone
-// (package, core, dram, psys, ...). It implements devices.ZoneReader.
-func (s *Source) ReadZones() ([]devices.ZoneReading, error) {
+// (package, core, dram, psys, ...). It implements ZoneReader.
+func (s *Source) ReadZones() ([]ZoneReading, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
-	out := make([]devices.ZoneReading, 0, len(s.Zones))
+	out := make([]ZoneReading, 0, len(s.Zones))
 	for _, z := range s.Zones {
 		cur, err := utils.ReadUint(filepath.Join(z.Path, "energy_uj"))
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", z.ID, err)
 		}
-		out = append(out, devices.ZoneReading{
+		out = append(out, ZoneReading{
 			ID:       z.ID,
 			Name:     z.Name,
 			ParentID: z.ParentID,
@@ -86,4 +86,20 @@ func (s *Source) ReadZones() ([]devices.ZoneReading, error) {
 		})
 	}
 	return out, nil
+}
+
+// ListZones describes every zone and subzone found, without reading their
+// energy. It implements ZoneLister.
+func (s *Source) ListZones() []ZoneInfo {
+	out := make([]ZoneInfo, 0, len(s.Zones))
+	for _, z := range s.Zones {
+		out = append(out, ZoneInfo{
+			ID:       z.ID,
+			Name:     z.Name,
+			ParentID: z.ParentID,
+			MaxUJ:    z.MaxEnergyRangeUJ,
+			Readable: z.Readable(),
+		})
+	}
+	return out
 }

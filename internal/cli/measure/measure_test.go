@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"sathiraumesh/ampere/internal/devices"
+	"sathiraumesh/ampere/internal/devices/cpu/rapl"
+	"sathiraumesh/ampere/internal/energy"
 )
 
 // counterSource is a source that returns the given readings in order.
@@ -56,10 +58,10 @@ func fakeClock(t *testing.T) *[]time.Duration {
 }
 
 // measureSample runs "ampere measure <args> -o json" and decodes the sample.
-func measureSample(t *testing.T, args ...string) devices.Sample {
+func measureSample(t *testing.T, args ...string) energy.Sample {
 	t.Helper()
 	out := run(t, append(append([]string{"measure"}, args...), "-o", "json")...)
-	var s devices.Sample
+	var s energy.Sample
 	if err := json.Unmarshal([]byte(out), &s); err != nil {
 		t.Fatalf("output is not JSON: %v\n%s", err, out)
 	}
@@ -73,7 +75,7 @@ func TestMeasurePower(t *testing.T) {
 
 	got := measureSample(t)
 
-	want := devices.Sample{
+	want := energy.Sample{
 		Device:    "cpu",
 		Source:    "fake",
 		Start:     time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC),
@@ -291,7 +293,7 @@ func TestMeasureToFileJSON(t *testing.T) {
 		t.Fatalf("want 2 appended JSON lines, got %d:\n%s", len(lines), data)
 	}
 	for _, l := range lines {
-		var s devices.Sample
+		var s energy.Sample
 		if err := json.Unmarshal([]byte(l), &s); err != nil || s.EnergyJ != 1 {
 			t.Errorf("line %q: %+v, %v", l, s, err)
 		}
@@ -332,20 +334,22 @@ func TestMeasureToFileBadPath(t *testing.T) {
 // zoneSource is a counterSource that also has zones (like RAPL).
 type zoneSource struct {
 	*counterSource
-	zoneReadings [][]devices.ZoneReading
+	zoneReadings [][]rapl.ZoneReading
 	zoneCalls    int
 }
 
-func (z *zoneSource) ReadZones() ([]devices.ZoneReading, error) {
+func (z *zoneSource) ReadZones() ([]rapl.ZoneReading, error) {
 	r := z.zoneReadings[z.zoneCalls]
 	z.zoneCalls++
 	return r, nil
 }
 
-func laptopZones() *zoneSource {
+// singlePackageZones is a single-socket source with zones over one second:
+// package-0 uses 12 J, its core subzone 5 J.
+func singlePackageZones() *zoneSource {
 	return &zoneSource{
 		counterSource: &counterSource{readings: []uint64{0, 12_000_000}}, // 12 J
-		zoneReadings: [][]devices.ZoneReading{
+		zoneReadings: [][]rapl.ZoneReading{
 			{
 				{ID: "intel-rapl:0", Name: "package-0", EnergyUJ: 0},
 				{ID: "intel-rapl:0:0", Name: "core", ParentID: "intel-rapl:0", EnergyUJ: 0},
@@ -360,11 +364,11 @@ func laptopZones() *zoneSource {
 
 func TestMeasureZonesByDefaultJSON(t *testing.T) {
 	fakeClock(t)
-	withSources(t, laptopZones())
+	withSources(t, singlePackageZones())
 
 	got := measureSample(t)
 
-	want := []devices.ZoneSample{
+	want := []rapl.ZoneSample{
 		{ID: "intel-rapl:0", Name: "package-0", EnergyJ: 12, PowerW: 12},
 		{ID: "intel-rapl:0:0", Name: "core", Parent: "intel-rapl:0", EnergyJ: 5, PowerW: 5},
 	}
@@ -375,7 +379,7 @@ func TestMeasureZonesByDefaultJSON(t *testing.T) {
 
 func TestMeasureZonesInOneTable(t *testing.T) {
 	fakeClock(t)
-	withSources(t, laptopZones())
+	withSources(t, singlePackageZones())
 
 	out := run(t, "measure")
 
@@ -418,7 +422,7 @@ func TestMeasureCountJSON(t *testing.T) {
 	}
 	start := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
 	for i, l := range lines {
-		var s devices.Sample
+		var s energy.Sample
 		if err := json.Unmarshal([]byte(l), &s); err != nil {
 			t.Fatalf("line %d not JSON: %v", i, err)
 		}
@@ -468,9 +472,9 @@ func TestMeasureCountToFile(t *testing.T) {
 
 func TestMeasureCountZones(t *testing.T) {
 	fakeClock(t)
-	src := laptopZones()
+	src := singlePackageZones()
 	src.readings = append(src.readings, 20_000_000)
-	src.zoneReadings = append(src.zoneReadings, []devices.ZoneReading{
+	src.zoneReadings = append(src.zoneReadings, []rapl.ZoneReading{
 		{ID: "intel-rapl:0", Name: "package-0", EnergyUJ: 20_000_000},
 		{ID: "intel-rapl:0:0", Name: "core", ParentID: "intel-rapl:0", EnergyUJ: 9_000_000},
 	})
@@ -482,7 +486,7 @@ func TestMeasureCountZones(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("want 2 lines, got:\n%s", out)
 	}
-	var s devices.Sample
+	var s energy.Sample
 	if err := json.Unmarshal([]byte(lines[1]), &s); err != nil {
 		t.Fatal(err)
 	}

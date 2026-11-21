@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"sathiraumesh/ampere/internal/devices/registry"
-	"sathiraumesh/ampere/internal/utils"
+	"sathiraumesh/ampere/internal/output"
 
 	"github.com/spf13/cobra"
 )
@@ -33,7 +33,7 @@ func statusCommand() *cobra.Command {
 				if i > 0 {
 					fmt.Fprintln(out)
 				}
-				if err := utils.WriteDevice(out, device, report); err != nil {
+				if err := output.WriteDevice(out, device, report); err != nil {
 					return err
 				}
 			}

@@ -1,4 +1,3 @@
-// Package utils holds small helpers shared by the ampere packages.
 package utils
 
 import (

@@ -226,12 +226,14 @@ ampere/
 │   ├── devices/                device report, Source interface
 │   │   ├── registry/           every energy source of every device (wired here)
 │   │   └── cpu/                cpu.Source interface, source selection
-│   │       └── rapl/           RAPL zones and rapl.Source
+│   │       └── rapl/           rapl.Source, RAPL zones (ZoneReader, ZoneSamples)
+│   ├── energy/                 energy.Sample: one measurement, with its zones
 │   ├── host/                   host-level data and energy attribution
-│   │   ├── attribution/        active/idle/target energy split
+│   │   ├── attribution/        a target's share of the energy
 │   │   ├── cgroup/             find docker/podman/containerd containers, CPU time
 │   │   └── proc/               CPU time from /proc (host active/idle, per process)
-│   └── utils/                  small helpers (ReadUint, output, CutAffix, IsHex)
+│   ├── output/                 tables and JSON lines, to the terminal or a file
+│   └── utils/                  small helpers (ReadUint, CutAffix, IsHex, ...)
 ├── assets/logo.svg
 └── Makefile
 ```

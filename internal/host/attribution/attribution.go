@@ -19,7 +19,7 @@ import (
 	"errors"
 	"time"
 
-	"sathiraumesh/ampere/internal/devices"
+	"sathiraumesh/ampere/internal/energy"
 	"sathiraumesh/ampere/internal/host/proc"
 )
 
@@ -80,7 +80,7 @@ type Sample struct {
 
 // NewSample splits the energy sample s (total and zones) using the host's
 // CPU usage and the target's CPU time in seconds over the same interval.
-func NewSample(s devices.Sample, t Target, cpu proc.CPUUsage, targetCPUSeconds float64) (Sample, error) {
+func NewSample(s energy.Sample, t Target, cpu proc.CPUUsage, targetCPUSeconds float64) (Sample, error) {
 	ran := cpu.Active + cpu.Idle
 	if ran == 0 {
 		return Sample{}, ErrNoCPUTime

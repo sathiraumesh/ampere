@@ -6,6 +6,7 @@ import (
 	"io/fs"
 
 	"sathiraumesh/ampere/internal/devices"
+	"sathiraumesh/ampere/internal/devices/cpu/rapl"
 	"sathiraumesh/ampere/internal/host/attribution"
 	"sathiraumesh/ampere/internal/host/cgroup"
 	"sathiraumesh/ampere/internal/host/proc"
@@ -19,6 +20,14 @@ var (
 	findContainer      = cgroup.FindContainer
 	readContainerUsage = cgroup.ReadUsage
 )
+
+// splitHelp explains how a target gets its share, for the help of
+// "measure process" and "measure container".
+const splitHelp = `For the total and every zone, the target gets a share of the energy of
+each interval, by CPU time:
+  active energy = energy × active CPU ticks / (active + idle ticks)
+  target energy = active energy × target CPU time / active CPU time
+Idle energy belongs to the machine, not to any process or container.`
 
 // target is what "measure process" or "measure container" measures.
 // Exactly one of pid and container is set.
@@ -39,7 +48,7 @@ type snapshot struct {
 // takeSnapshot reads the target's CPU time (if t is not nil), the host's
 // CPU time and the energy counters, as close together as possible. With
 // no target, /proc and /sys/fs/cgroup are not read at all.
-func takeSnapshot(t *target, src devices.Source, zr devices.ZoneReader) (snapshot, error) {
+func takeSnapshot(t *target, src devices.Source, zr rapl.ZoneReader) (snapshot, error) {
 	var s snapshot
 	if t != nil {
 		if err := t.read(&s); err != nil {

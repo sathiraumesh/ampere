@@ -44,8 +44,8 @@ func fakePowercap(t *testing.T, zones ...fakeZone) string {
 	return root
 }
 
-// laptop is the layout of the dev laptop (AMD): one package with a core subzone.
-var laptop = []fakeZone{
+// singlePackage is a single-socket layout: one package with a core subzone.
+var singlePackage = []fakeZone{
 	{"intel-rapl:0", "package-0", "1000", "65532610987"},
 	{"intel-rapl:0:0", "core", "400", "65532610987"},
 }
@@ -66,7 +66,7 @@ func TestParentID(t *testing.T) {
 }
 
 func TestStatusAt(t *testing.T) {
-	root := fakePowercap(t, laptop...)
+	root := fakePowercap(t, singlePackage...)
 
 	zones, err := statusAt(root)
 	if err != nil {

@@ -1,4 +1,4 @@
-package devices
+package rapl
 
 import "fmt"
 
@@ -8,6 +8,21 @@ import "fmt"
 type ZoneReader interface {
 	// ReadZones returns the current raw counter of every zone.
 	ReadZones() ([]ZoneReading, error)
+}
+
+// ZoneLister is an optional extra for a Source that has zones: it
+// describes them without reading their energy, for "ampere status".
+type ZoneLister interface {
+	ListZones() []ZoneInfo
+}
+
+// ZoneInfo describes one zone, as found on this machine.
+type ZoneInfo struct {
+	ID       string // e.g. "intel-rapl:0:0"
+	Name     string // e.g. "core"
+	ParentID string // "" for top-level zones
+	MaxUJ    uint64 // where the counter wraps back to 0; 0 if unknown
+	Readable bool   // the energy counter can be read (usually needs root)
 }
 
 // ZoneReading is one raw zone counter at one moment.

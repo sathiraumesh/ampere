@@ -7,14 +7,15 @@ import (
 	"testing"
 	"time"
 
-	"sathiraumesh/ampere/internal/devices"
+	"sathiraumesh/ampere/internal/devices/cpu/rapl"
+	"sathiraumesh/ampere/internal/energy"
 	"sathiraumesh/ampere/internal/host/proc"
 )
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
-func sample() devices.Sample {
-	return devices.Sample{
+func sample() energy.Sample {
+	return energy.Sample{
 		Device:    "cpu",
 		Source:    "rapl",
 		Start:     time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC),
@@ -22,7 +23,7 @@ func sample() devices.Sample {
 		IntervalS: 2,
 		EnergyJ:   20,
 		PowerW:    10,
-		Zones: []devices.ZoneSample{
+		Zones: []rapl.ZoneSample{
 			{ID: "intel-rapl:0", Name: "package-0", EnergyJ: 20},
 			{ID: "intel-rapl:0:0", Name: "core", Parent: "intel-rapl:0", EnergyJ: 8},
 		},
@@ -144,7 +145,7 @@ func TestNewSampleContainer(t *testing.T) {
 // with its ID, name and parent kept; nothing is specific to one machine.
 func TestNewProcessSampleServerZones(t *testing.T) {
 	s := sample()
-	s.Zones = []devices.ZoneSample{
+	s.Zones = []rapl.ZoneSample{
 		{ID: "intel-rapl:0", Name: "package-0", EnergyJ: 40},
 		{ID: "intel-rapl:0:0", Name: "dram", Parent: "intel-rapl:0", EnergyJ: 8},
 		{ID: "intel-rapl:1", Name: "package-1", EnergyJ: 36},

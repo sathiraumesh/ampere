@@ -5,14 +5,15 @@ package measure
 import (
 	"fmt"
 	"io"
-	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"sathiraumesh/ampere/internal/devices"
+	"sathiraumesh/ampere/internal/devices/cpu/rapl"
 	"sathiraumesh/ampere/internal/devices/registry"
-	"sathiraumesh/ampere/internal/utils"
+	"sathiraumesh/ampere/internal/energy"
+	"sathiraumesh/ampere/internal/output"
 )
 
 // These are variables so tests can run without waiting (sleep, now) and
@@ -39,7 +40,7 @@ type measureOptions struct {
 // Its subcommands "process" and "container" also split that energy into
 // active, idle and the target's share (see target.go).
 func Command() *cobra.Command {
-	var o measureOptions
+	var opts measureOptions
 
 	cmd := &cobra.Command{
 		Use:   "measure",
@@ -55,105 +56,53 @@ one process or container.`,
 			"  sudo ampere measure -o json -f samples.jsonl",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return o.run(cmd, nil)
+			return opts.run(cmd, nil)
 		},
 	}
 
 	f := cmd.PersistentFlags()
-	f.DurationVarP(&o.interval, "interval", "i", 1*time.Second,
+	f.DurationVarP(&opts.interval, "interval", "i", 1*time.Second,
 		"length of each sample (e.g. 500ms, 1s, 5s)")
-	f.IntVarP(&o.count, "count", "n", 1,
+	f.IntVarP(&opts.count, "count", "n", 1,
 		"number of samples to take, one per interval, back to back")
-	f.StringVarP(&o.device, "device", "d", devices.CPU,
+	f.StringVarP(&opts.device, "device", "d", devices.CPU,
 		"device to measure, e.g. cpu")
-	f.StringVarP(&o.source, "source", "s", "",
+	f.StringVarP(&opts.source, "source", "s", "",
 		"energy source of that device, e.g. rapl (default: first available)")
-	f.StringVarP(&o.output, "output", "o", utils.OutputTable,
+	f.StringVarP(&opts.output, "output", "o", output.Table,
 		"output format: table or json")
-	f.StringVarP(&o.file, "file", "f", "",
+	f.StringVarP(&opts.file, "file", "f", "",
 		"append the samples to this file instead of printing them (created if missing)")
 
 	cmd.AddCommand(
-		measureProcessCommand(&o),
-		measureContainerCommand(&o),
+		measureProcessCommand(&opts),
+		measureContainerCommand(&opts),
 	)
 	return cmd
 }
 
-// splitHelp explains the split, for the process and container subcommands.
-const splitHelp = `For the total and every zone, the energy of each interval is split by
-CPU time:
-  active energy = energy × active CPU ticks / (active + idle ticks)
-  idle energy   = energy × idle CPU ticks   / (active + idle ticks)
-  target energy = active energy × target CPU time / active CPU time`
-
-// measureProcessCommand builds "ampere measure process <pid>".
-func measureProcessCommand(o *measureOptions) *cobra.Command {
-	return &cobra.Command{
-		Use:   "process <pid>",
-		Short: "Estimate one process's energy: active, idle and its share, per zone",
-		Long:  "Estimate one process's energy over an interval.\n\n" + splitHelp,
-		Example: "  sudo ampere measure process 1234\n" +
-			"  sudo ampere measure process 1234 -i 1s -n 20 -o json -f pid.jsonl",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			pid, err := strconv.Atoi(args[0])
-			if err != nil || pid <= 0 {
-				return fmt.Errorf("pid must be a positive number, got %q", args[0])
-			}
-			return o.run(cmd, &target{pid: pid})
-		},
-	}
-}
-
-// measureContainerCommand builds "ampere measure container <id>".
-func measureContainerCommand(o *measureOptions) *cobra.Command {
-	return &cobra.Command{
-		Use:   "container <id>",
-		Short: "Estimate one container's energy: active, idle and its share, per zone",
-		Long: "Estimate one container's energy over an interval: all its processes,\n" +
-			"from its cgroup's CPU time.\n\n" +
-			"<id> is a Docker, Podman or containerd (Kubernetes CRI, nerdctl)\n" +
-			"container ID, full or short (as docker ps shows). Needs cgroup v2.\n\n" +
-			splitHelp,
-		Example: "  sudo ampere measure container 44f86868889b\n" +
-			"  sudo ampere measure container 44f86868889b -i 1s -n 20 -o json -f ctr.jsonl",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := checkSampling(o.interval, o.count, o.output); err != nil {
-				return err // before the cgroup search, so bad flags fail fast
-			}
-			c, err := findContainer(args[0])
-			if err != nil {
-				return err
-			}
-			return o.run(cmd, &target{container: &c})
-		},
-	}
-}
-
 // run measures with the options. With a target (process or container) it
 // writes target samples, otherwise device samples.
-func (o *measureOptions) run(cmd *cobra.Command, t *target) error {
-	if err := checkSampling(o.interval, o.count, o.output); err != nil {
+func (opts *measureOptions) run(cmd *cobra.Command, t *target) error {
+	if err := checkSampling(opts.interval, opts.count, opts.output); err != nil {
 		return err
 	}
-	src, err := deviceStatus().Pick(o.device, o.source)
+	src, err := deviceStatus().Pick(opts.device, opts.source)
 	if err != nil {
 		return err
 	}
 
 	// Zones are included whenever the source has them (it implements
 	// ZoneReader); otherwise zr stays nil and only the total is shown.
-	zr, _ := src.(devices.ZoneReader)
+	zr, _ := src.(rapl.ZoneReader)
 
 	// write prints one sample (or appends it to --file); header is true for
 	// the first one, so a table's rows line up under it.
 	write := func(header bool, sample func(w io.Writer, header bool) error) error {
-		if o.file == "" {
+		if opts.file == "" {
 			return sample(cmd.OutOrStdout(), header)
 		}
-		return utils.AppendTo(o.file, sample)
+		return output.AppendTo(opts.file, sample)
 	}
 
 	// Each interval starts at the previous interval's end reading, so
@@ -162,8 +111,8 @@ func (o *measureOptions) run(cmd *cobra.Command, t *target) error {
 	if err != nil {
 		return err
 	}
-	for i := 0; i < o.count; i++ {
-		sleep(o.interval)
+	for i := 0; i < opts.count; i++ {
+		sleep(opts.interval)
 		cur, err := takeSnapshot(t, src, zr)
 		if err != nil {
 			return err
@@ -177,7 +126,7 @@ func (o *measureOptions) run(cmd *cobra.Command, t *target) error {
 				return fmt.Errorf("%s: %w", src.Name(), err)
 			}
 			sample = func(w io.Writer, header bool) error {
-				return utils.WriteSample(w, o.output, s, header)
+				return output.WriteSample(w, opts.output, s, header)
 			}
 		} else {
 			s, err := makeTargetSample(src, zr != nil, t, prev, cur)
@@ -185,7 +134,7 @@ func (o *measureOptions) run(cmd *cobra.Command, t *target) error {
 				return err
 			}
 			sample = func(w io.Writer, header bool) error {
-				return utils.WriteTargetSample(w, o.output, s, header)
+				return output.WriteTargetSample(w, opts.output, s, header)
 			}
 		}
 		if err := write(i == 0, sample); err != nil {
@@ -197,15 +146,15 @@ func (o *measureOptions) run(cmd *cobra.Command, t *target) error {
 }
 
 // checkSampling validates the sampling flags.
-func checkSampling(interval time.Duration, count int, output string) error {
+func checkSampling(interval time.Duration, count int, format string) error {
 	if interval <= 0 {
 		return fmt.Errorf("--interval must be > 0, got %s", interval)
 	}
 	if count < 1 {
 		return fmt.Errorf("--count must be >= 1, got %d", count)
 	}
-	if output != utils.OutputTable && output != utils.OutputJSON {
-		return fmt.Errorf("--output must be %q or %q, got %q", utils.OutputTable, utils.OutputJSON, output)
+	if format != output.Table && format != output.JSON {
+		return fmt.Errorf("--output must be %q or %q, got %q", output.Table, output.JSON, format)
 	}
 	return nil
 }
@@ -214,11 +163,11 @@ func checkSampling(interval time.Duration, count int, output string) error {
 type reading struct {
 	energyUJ uint64
 	at       time.Time
-	zones    []devices.ZoneReading
+	zones    []rapl.ZoneReading
 }
 
 // takeReading reads the total counter and, if zr is not nil, all zones.
-func takeReading(src devices.Source, zr devices.ZoneReader) (reading, error) {
+func takeReading(src devices.Source, zr rapl.ZoneReader) (reading, error) {
 	e, t, err := readAt(src.Read)
 	if err != nil {
 		return reading{}, err
@@ -232,17 +181,17 @@ func takeReading(src devices.Source, zr devices.ZoneReader) (reading, error) {
 
 // makeSample turns two readings into energy and power over the interval
 // between them. withZones adds the per-zone breakdown.
-func makeSample(src devices.Source, withZones bool, a, b reading) (devices.Sample, error) {
+func makeSample(src devices.Source, withZones bool, a, b reading) (energy.Sample, error) {
 	// The raw counter wraps to 0; a smaller second reading means it
 	// wrapped during the interval and the difference is not usable.
 	if b.energyUJ < a.energyUJ {
-		return devices.Sample{}, fmt.Errorf("energy counter wrapped during the interval, try again")
+		return energy.Sample{}, fmt.Errorf("energy counter wrapped during the interval, try again")
 	}
 
 	dt := b.at.Sub(a.at).Seconds()
 	joules := float64(b.energyUJ-a.energyUJ) / 1e6 // µJ → J
 
-	s := devices.Sample{
+	s := energy.Sample{
 		Device:    src.Device(),
 		Source:    src.Name(),
 		Start:     a.at.UTC(),
@@ -253,15 +202,15 @@ func makeSample(src devices.Source, withZones bool, a, b reading) (devices.Sampl
 	}
 	if withZones {
 		var err error
-		if s.Zones, err = devices.ZoneSamples(a.zones, b.zones, dt); err != nil {
-			return devices.Sample{}, err
+		if s.Zones, err = rapl.ZoneSamples(a.zones, b.zones, dt); err != nil {
+			return energy.Sample{}, err
 		}
 	}
 	return s, nil
 }
 
 // readZones reads all zones, or nothing if zr is nil (--zones not set).
-func readZones(zr devices.ZoneReader) ([]devices.ZoneReading, error) {
+func readZones(zr rapl.ZoneReader) ([]rapl.ZoneReading, error) {
 	if zr == nil {
 		return nil, nil
 	}
