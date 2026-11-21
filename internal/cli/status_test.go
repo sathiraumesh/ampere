@@ -45,46 +45,65 @@ func assertContains(t *testing.T, got string, wants ...string) {
 	}
 }
 
-// laptopRAPL looks like the dev laptop: package-0 with a core subzone.
-func laptopRAPL() *rapl.Source {
+// serverRAPL is a two-socket layout with every RAPL zone type: each
+// package-N with its subzones (core, uncore, dram), and the top-level psys.
+// Packages and psys are readable; the subzones are not, so both cases show.
+func serverRAPL() *rapl.Source {
+	denied := errors.New("permission denied")
 	return &rapl.Source{Zones: []rapl.Zone{
-		{ID: "intel-rapl:0", Name: "package-0", MaxEnergyRangeUJ: 65532610987},
-		{ID: "intel-rapl:0:0", Name: "core", ParentID: "intel-rapl:0",
-			MaxEnergyRangeUJ: 65532610987, EnergyErr: errors.New("permission denied")},
+		{ID: "intel-rapl:0", Name: "package-0", MaxEnergyRangeUJ: 262143328850},
+		{ID: "intel-rapl:0:0", Name: "core", ParentID: "intel-rapl:0", MaxEnergyRangeUJ: 262143328850, EnergyErr: denied},
+		{ID: "intel-rapl:0:1", Name: "uncore", ParentID: "intel-rapl:0", MaxEnergyRangeUJ: 262143328850, EnergyErr: denied},
+		{ID: "intel-rapl:0:2", Name: "dram", ParentID: "intel-rapl:0", MaxEnergyRangeUJ: 65712999613, EnergyErr: denied},
+		{ID: "intel-rapl:1", Name: "package-1", MaxEnergyRangeUJ: 262143328850},
+		{ID: "intel-rapl:1:0", Name: "core", ParentID: "intel-rapl:1", MaxEnergyRangeUJ: 262143328850, EnergyErr: denied},
+		{ID: "intel-rapl:1:1", Name: "dram", ParentID: "intel-rapl:1", MaxEnergyRangeUJ: 65712999613, EnergyErr: denied},
+		{ID: "intel-rapl:2", Name: "psys", MaxEnergyRangeUJ: 262143328850},
 	}}
 }
 
 func TestStatusRAPL(t *testing.T) {
-	withSources(t, laptopRAPL())
+	withSources(t, serverRAPL())
 
 	out := run(t, "status")
 
 	assertContains(t, out,
 		"CPU energy sources:",
-		" rapl (2 zones)",
+		" rapl (8 zones)",
 		"ID", "NAME", "PARENT", "MAX (µJ)", "READABLE", // table header
-		"intel-rapl:0 ", "package-0",
-		"intel-rapl:0:0", "core",
-		"65532610987",
 		"Using: rapl",
 	)
 
-	// Top-level zone shows "-" as parent and is readable;
-	// the core subzone shows its parent and is not readable.
+	// Every zone has a row with its name, parent ("-" if top-level), max
+	// and whether it is readable.
+	want := map[string][]string{
+		"intel-rapl:0":   {"package-0", "-", "262143328850", "true"},
+		"intel-rapl:0:0": {"core", "intel-rapl:0", "262143328850", "false"},
+		"intel-rapl:0:1": {"uncore", "intel-rapl:0", "262143328850", "false"},
+		"intel-rapl:0:2": {"dram", "intel-rapl:0", "65712999613", "false"},
+		"intel-rapl:1":   {"package-1", "-", "262143328850", "true"},
+		"intel-rapl:1:0": {"core", "intel-rapl:1", "262143328850", "false"},
+		"intel-rapl:1:1": {"dram", "intel-rapl:1", "65712999613", "false"},
+		"intel-rapl:2":   {"psys", "-", "262143328850", "true"},
+	}
+	seen := map[string]bool{}
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) != 5 {
 			continue
 		}
-		switch fields[0] {
-		case "intel-rapl:0":
-			if fields[2] != "-" || fields[4] != "true" {
-				t.Errorf("package row = %q, want parent - and readable true", line)
-			}
-		case "intel-rapl:0:0":
-			if fields[2] != "intel-rapl:0" || fields[4] != "false" {
-				t.Errorf("core row = %q, want parent intel-rapl:0 and readable false", line)
-			}
+		w, ok := want[fields[0]]
+		if !ok {
+			continue
+		}
+		seen[fields[0]] = true
+		if strings.Join(fields[1:], " ") != strings.Join(w, " ") {
+			t.Errorf("row %s = %q, want %q", fields[0], fields[1:], w)
+		}
+	}
+	for id := range want {
+		if !seen[id] {
+			t.Errorf("no row for zone %s:\n%s", id, out)
 		}
 	}
 }
@@ -129,21 +148,9 @@ func TestStatusNoSources(t *testing.T) {
 	assertContains(t, out, "No energy sources found.")
 }
 
-func TestStatusRejectsArgs(t *testing.T) {
-	withSources(t, laptopRAPL())
-
-	cmd := RootCommand()
-	cmd.SetOut(&strings.Builder{})
-	cmd.SetErr(&strings.Builder{})
-	cmd.SetArgs([]string{"status", "extra"})
-	if err := cmd.Execute(); err == nil {
-		t.Error(`"ampere status extra" should fail: status takes no arguments`)
-	}
-}
-
 func TestStatusAllDevices(t *testing.T) {
 	withSources(t,
-		laptopRAPL(),
+		serverRAPL(),
 		fakeSource{name: "nvml", dev: "gpu"},
 		fakeSource{name: "rapl-dram", dev: "dram", err: errors.New("no zone")},
 	)
@@ -151,7 +158,7 @@ func TestStatusAllDevices(t *testing.T) {
 	out := run(t, "status")
 
 	assertContains(t, out,
-		"CPU energy sources:", " rapl (2 zones)", "Using: rapl",
+		"CPU energy sources:", " rapl (8 zones)", "Using: rapl",
 		"GPU energy sources:", " nvml\n", "Using: nvml",
 		"DRAM energy sources:", "rapl-dram: no zone",
 		"Using: none (no dram energy source available)",

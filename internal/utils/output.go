@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"text/tabwriter"
 
 	"sathiraumesh/ampere/internal/devices"
 	"sathiraumesh/ampere/internal/host/attribution"
@@ -145,4 +147,42 @@ func shortID(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+// WriteDevice prints one device for "ampere status": its energy sources,
+// the zones of sources that have them (devices.ZoneLister), and which
+// source will be used.
+func WriteDevice(out io.Writer, device string, report devices.Report) error {
+	fmt.Fprintf(out, "%s energy sources:\n", strings.ToUpper(device))
+	for _, s := range report.For(device) {
+		if !devices.Available(s) {
+			fmt.Fprintf(out, " %s: %v\n", s.Name(), s.Err())
+			continue
+		}
+		zl, ok := s.(devices.ZoneLister)
+		if !ok {
+			// A source without zones: show just the name.
+			fmt.Fprintf(out, " %s\n", s.Name())
+			continue
+		}
+		zones := zl.ListZones()
+		fmt.Fprintf(out, " %s (%d zones)\n", s.Name(), len(zones))
+		w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "      ID\tNAME\tPARENT\tMAX (µJ)\tREADABLE")
+		for _, z := range zones {
+			fmt.Fprintf(w, "      %s\t%s\t%s\t%d\t%v\n",
+				z.ID, z.Name, dash(z.ParentID), z.MaxUJ, z.Readable)
+		}
+		if err := w.Flush(); err != nil {
+			return err
+		}
+	}
+
+	var err error
+	if p := report.Preferred(device); p != nil {
+		_, err = fmt.Fprintln(out, "Using:", p.Name())
+	} else {
+		_, err = fmt.Fprintf(out, "Using: none (no %s energy source available)\n", device)
+	}
+	return err
 }
