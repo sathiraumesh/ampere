@@ -10,28 +10,22 @@
 
 # ampere
 
-`ampere` estimates how much energy each process uses on a Linux machine.
-It also measures Docker, Podman and containerd containers; Kubernetes
-pods are planned.
+`ampere` is command line tool that estimates how much energy of running process on a Linux machines.
+It also supports estimation of energy of containers with runtimes Docker, Podman and Containerd.
 
-It combines two kernel sources:
 
-- **Energy** from RAPL counters in `/sys/class/powercap`
-- **CPU time** per process from `/proc`
+It currently supports only
+
+-  Energy estimation through RAPL counters.
 
 ```text
 process energy = CPU energy (RAPL) × process CPU time / active CPU time
 ```
 
-> Status: early development. `ampere status`, `ampere measure`,
-> `measure process` and `measure container` work.
-
 ## Requirements
 
 - Linux with RAPL (Intel, or AMD Zen via the same `intel-rapl` driver)
 - Go 1.26 or newer to build
-- Root to read energy: `energy_uj` has been root-only since the PLATYPUS
-  side-channel fix (2020)
 
 ## Build
 
@@ -42,11 +36,7 @@ make help             # list all targets
 
 The version, commit and build date are embedded at build time:
 
-```bash
-make build VERSION=v0.1.0
-./bin/ampere --version
-# ampere v0.1.0 (commit a1b2c3d, built 2026-11-20T10:00:00Z, go1.26.2 linux/amd64)
-```
+
 
 ## Usage
 
@@ -87,166 +77,50 @@ sudo ./bin/ampere measure --source rapl   # force a source (default: first avail
 sudo ./bin/ampere measure -o json         # JSON instead of a table
 make measure-root                         # same, builds first
 ```
+## Energy attribution
 
-```text
-DEVICE  SOURCE  INTERVAL (s)  ZONE            NAME        PARENT          ENERGY (J)   POWER (W)
-cpu     rapl    1.000213      total           -           -               12.345678    12.34
-cpu     rapl    1.000213      intel-rapl:0    package-0   -               12.345678    12.34
-cpu     rapl    1.000213      intel-rapl:0:0  core        intel-rapl:0    4.987654     4.99
-```
+`ampere` measures the machine's energy over an interval and gives a process
+or container its share, by CPU time. It reads three counters at the start
+and end of every interval:
 
-Every sample is a `total` row plus one row per zone, all under one header,
-so `-n 20` (or appending to the same file with `-f`) builds one table.
-A source without zones prints only the total row, without the zone columns.
+| Counter | From | Gives |
+|---|---|---|
+| Energy | RAPL, `/sys/class/powercap/intel-rapl:*/energy_uj` | joules used by the CPU, total and per zone |
+| Host CPU time | `/proc/stat` | ticks the CPUs were **active** and **idle** |
+| Target CPU time | process: `/proc/<pid>/stat` (utime + stime)<br>container: cgroup `cpu.stat` (`usage_usec`) | CPU time the target used |
 
-With `-o json`, each sample is one JSON object per line (JSON Lines), so
-repeated runs can be appended to a file:
-
-```bash
-sudo ./bin/ampere measure -o json -f samples.jsonl   # appends one line per run
-```
-
-```json
-{"device":"cpu","source":"rapl","start":"2026-11-20T10:00:00Z","end":"2026-11-20T10:00:01.000213Z","interval_s":1.000213,"energy_j":12.345678,"power_w":12.34}
-```
-
-`measure` takes two readings of the preferred source, `--interval` apart.
-With `--count N` it takes N samples in a row: each one starts at the
-previous one's end reading, so there are no gaps between them. The table
-header is printed once; with `-f`, every sample is appended as it is taken.
-If the counter wraps to 0 during a sample, it reports an error; run it again.
-
-### Energy of one process or container
-
-```bash
-sudo ./bin/ampere measure process 1234                       # over 1 s
-sudo ./bin/ampere measure process 1234 -i 1s -n 20           # 20 samples, back to back
-sudo ./bin/ampere measure process 1234 -o json -f pid.jsonl
-
-sudo ./bin/ampere measure container 44f86868889b             # short or full ID
-sudo ./bin/ampere measure container 44f86868889b -i 1s -n 20 -o json -f ctr.jsonl
-```
-
-All `measure` flags (`-i -n -d -s -o -f`) work with both subcommands.
-
-For the device total and **every zone the source reports** (on RAPL:
-`package-N`, `core`, `uncore`, `dram`, `psys`, whichever this machine has),
-the target gets a share of the energy of each interval, by CPU time:
+The energy of each interval is split in two steps:
 
 ```text
 active energy = energy × active ticks / (active + idle ticks)
 target energy = active energy × target CPU time / active CPU time
+target power  = target energy / interval
 ```
 
-Only the active part is shared out: idle energy belongs to the machine, not
-to any process or container. Active and idle energy are machine-wide, so
-they are used in the calculation but not shown as the target's.
+1. **Active vs idle.** Only the part of the energy spent while the CPUs were
+   doing work is shared out. The idle part is what the machine uses just by
+   being on; it belongs to the machine, not to any process or container.
+2. **Target's share.** The target gets the fraction of the active CPU time
+   that it used, capped at 100% because the counters are read a moment apart.
 
-- **active** ticks: user, nice, system, irq, softirq (`/proc/stat`)
-- **idle** ticks: idle, iowait. Steal is left out (another VM ran then).
-- **target** CPU time:
-  - process: utime + stime (`/proc/<pid>/stat`)
-  - container: `usage_usec` of its cgroup (`cpu.stat`), all its processes
+The same split is applied to the total and to every RAPL zone
+(`package-N`, `core`, `uncore`, `dram`, `psys`, whichever the machine has).
 
-Non-CPU zones such as `dram` are shared by the same CPU time, so the
-target's share of them is an estimate, not a separate measurement.
-Parent zones include their children: do not sum zone rows.
+**Example.** In 1 s the machine used 20 J and its CPUs were 25% active, so
+5 J is active energy and 15 J idle energy. A container used 25% of the
+active CPU time, so it gets 5 J × 25% = **1.25 J (1.25 W)**.
 
-```text
-PID      COMM             INTERVAL (s)  PID CPU  ZONE            NAME        PARENT          ENERGY (J)   PID (J)    PID (W)
-1234     worker           1.000210      40.0%    total           -           -               12.000000    1.200000   1.2000
-1234     worker           1.000210      40.0%    intel-rapl:0    package-0   -               12.000000    1.200000   1.2000
-1234     worker           1.000210      40.0%    intel-rapl:0:0  core        intel-rapl:0    5.000000     0.500000   0.5000
-```
+**What counts as active and idle:**
 
-For a container the first columns are `CONTAINER RUNTIME` and the target
-columns are labelled `CTR`. In JSON, a process has `pid`/`comm`, a
-container has `container`/`runtime`; both have `target_cpu`, `target_j`
-and `target_w`.
+- active: user, nice, system, irq, softirq
+- idle: idle, iowait
+- steal (time the hypervisor gave to other VMs) is left out of both: this
+  machine's CPUs did not run then
 
-`measure process` fails if the process exits, or its PID is reused by a new
-process, during the run. `measure container` fails if the container stops.
-
-#### Containers
-
-Containers are found by their cgroup folder under `/sys/fs/cgroup`
-(cgroup v2 only):
-
-| Runtime | cgroup folder |
-|---|---|
-| Docker (systemd driver, rootful or rootless) | `docker-<id>.scope` |
-| Docker (cgroupfs driver) | `docker/<id>` |
-| Podman (systemd driver, rootful or rootless) | `libpod-<id>.scope` (not `libpod-conmon-…`) |
-| Podman (cgroupfs driver) | `libpod_parent/libpod-<id>` |
-| containerd under Kubernetes (CRI) | `cri-containerd-<id>.scope` |
-| containerd via nerdctl | `nerdctl-<id>.scope` |
-
-A short ID works if it matches exactly one container.
-
-## How it works
-
-### CPU energy sources
-
-Each energy source implements one interface, so new sources can be added
-without changing the rest of the tool:
-
-```go
-type Source interface {
-	Name() string                      // "rapl", ...
-	Err() error                        // nil if available here
-	Read() (energyUJ uint64, err error) // current counter in µJ
-}
-```
-
-`ampere` checks all sources in priority order and measures with the first
-available one. Sources are never summed: on AMD, RAPL and hwmon read the
-same hardware counter.
-
-| Source | Status |
-|---|---|
-| RAPL (`/sys/class/powercap`) | ✓ implemented |
-| hwmon (AMD energy driver) | planned |
-
-### Which RAPL zones are counted
-
-`Read()` sums only the **`package-N`** zones (one per CPU socket):
-
-- **Subzones** (`core`, `uncore`, `dram` under a package) are skipped
-  because their energy is already inside the package.
-- **`psys`** is skipped because it covers the package and more.
-
-## Project layout
-
-```text
-ampere/
-├── cmd/main.go                 entry point
-├── internal/
-│   ├── cli/                    cobra commands (root, status) + version info
-│   │   └── measure/            measure, measure process, measure container
-│   ├── devices/                device report, Source interface
-│   │   ├── registry/           every energy source of every device (wired here)
-│   │   └── cpu/                cpu.Source interface, source selection
-│   │       └── rapl/           rapl.Source, RAPL zones (ZoneReader, ZoneSamples)
-│   ├── host/                   host-level data and energy attribution
-│   │   ├── attribution/        a target's share of the energy
-│   │   │   └── energy/         energy.Sample: one measurement, with its zones
-│   │   ├── cgroup/             find docker/podman/containerd containers, CPU time
-│   │   └── proc/               CPU time from /proc (host active/idle, per process)
-│   ├── output/                 tables and JSON lines, to the terminal or a file
-│   └── utils/                  small helpers (ReadUint, CutAffix, IsHex, ...)
-├── assets/logo.svg
-└── Makefile
-```
-
-## Development
-
-```bash
-make test     # run all tests (no root or RAPL hardware needed)
-make check    # fmt + vet + test
-```
-
-Tests build a fake `/sys/class/powercap` tree in a temp folder, so they run
-anywhere, including CI and machines without RAPL.
+**Limits.** CPU time is a proxy for energy: two processes with the same CPU
+time can use different energy (vector instructions, cache misses, frequency).
+Zones such as `dram` are shared by CPU time too, so a target's share of them
+is an estimate, not a measurement of that component.
 
 ## Roadmap
 
