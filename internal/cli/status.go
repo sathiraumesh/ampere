@@ -7,21 +7,15 @@ import (
 	"text/tabwriter"
 
 	"sathiraumesh/ampere/internal/devices"
-	"sathiraumesh/ampere/internal/devices/cpu"
 	"sathiraumesh/ampere/internal/devices/cpu/rapl"
+	"sathiraumesh/ampere/internal/devices/registry"
 
 	"github.com/spf13/cobra"
 )
 
-// deviceStatus gathers every energy source of every device. This list is
-// the one place where device types are wired in; add e.g. gpu.Status()
-// here later. It is a variable so tests can replace it with a fake report.
-var deviceStatus = func() devices.Report {
-	var sources []devices.Source
-	sources = append(sources, cpu.Status()...)
-	//TODO: sources = append(sources, gpu.Status()...)
-	return devices.Report{Sources: sources}
-}
+// deviceStatus gathers every energy source of every device. It is a
+// variable so tests can replace it with a fake report.
+var deviceStatus = registry.Status
 
 // statusCommand builds "ampere status": check which energy sources are
 // available for every device on this machine.

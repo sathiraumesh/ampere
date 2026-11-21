@@ -3,6 +3,7 @@ package attribution
 import (
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,13 +29,13 @@ func sample() devices.Sample {
 	}
 }
 
-func TestNewProcessSample(t *testing.T) {
+func TestNewSample(t *testing.T) {
 	// 2 s on 2 CPUs at 100 Hz = 400 ticks: 100 active, 300 idle (+ 10 steal,
 	// which is left out). The process used 25 of the 100 active ticks.
 	cpu := proc.CPUUsage{Active: 100, Idle: 300, Steal: 10}
-	p := proc.ProcessTimes{PID: 42, Comm: "worker"}
+	p := Target{PID: 42, Comm: "worker"}
 
-	got, err := NewProcessSample(sample(), p, cpu, 25)
+	got, err := NewSample(sample(), p, cpu, proc.Seconds(25))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,12 +43,12 @@ func TestNewProcessSample(t *testing.T) {
 	if got.PID != 42 || got.Comm != "worker" || got.Device != "cpu" || got.Source != "rapl" || got.IntervalS != 2 {
 		t.Errorf("header fields = %+v", got)
 	}
-	if !near(got.CPUActive, 0.25) || !near(got.ProcessCPU, 0.25) {
-		t.Errorf("cpu_active %g, process_cpu %g; want 0.25, 0.25", got.CPUActive, got.ProcessCPU)
+	if !near(got.TargetCPU, 0.25) {
+		t.Errorf("target_cpu %g, want 0.25", got.TargetCPU)
 	}
 
 	// total 20 J: 5 J active, 15 J idle, process 1.25 J = 0.625 W over 2 s
-	checkSplit(t, "total", got.EnergySplit, EnergySplit{EnergyJ: 20, ActiveJ: 5, IdleJ: 15, ProcessJ: 1.25, ProcessW: 0.625})
+	checkSplit(t, "total", got.EnergySplit, EnergySplit{EnergyJ: 20, TargetJ: 1.25, TargetW: 0.625})
 
 	if len(got.Zones) != 2 {
 		t.Fatalf("zones = %+v", got.Zones)
@@ -59,19 +60,15 @@ func TestNewProcessSample(t *testing.T) {
 	if core.ID != "intel-rapl:0:0" || core.Name != "core" || core.Parent != "intel-rapl:0" {
 		t.Errorf("core zone = %+v", core)
 	}
-	checkSplit(t, "package-0", pkg.EnergySplit, EnergySplit{EnergyJ: 20, ActiveJ: 5, IdleJ: 15, ProcessJ: 1.25, ProcessW: 0.625})
-	checkSplit(t, "core", core.EnergySplit, EnergySplit{EnergyJ: 8, ActiveJ: 2, IdleJ: 6, ProcessJ: 0.5, ProcessW: 0.25})
+	checkSplit(t, "package-0", pkg.EnergySplit, EnergySplit{EnergyJ: 20, TargetJ: 1.25, TargetW: 0.625})
+	checkSplit(t, "core", core.EnergySplit, EnergySplit{EnergyJ: 8, TargetJ: 0.5, TargetW: 0.25})
 }
 
 func checkSplit(t *testing.T, name string, got, want EnergySplit) {
 	t.Helper()
-	if !near(got.EnergyJ, want.EnergyJ) || !near(got.ActiveJ, want.ActiveJ) ||
-		!near(got.IdleJ, want.IdleJ) || !near(got.ProcessJ, want.ProcessJ) ||
-		!near(got.ProcessW, want.ProcessW) {
+	if !near(got.EnergyJ, want.EnergyJ) || !near(got.TargetJ, want.TargetJ) ||
+		!near(got.TargetW, want.TargetW) {
 		t.Errorf("%s: got  %+v\nwant %+v", name, got, want)
-	}
-	if !near(got.ActiveJ+got.IdleJ, got.EnergyJ) {
-		t.Errorf("%s: active + idle = %g, want energy %g", name, got.ActiveJ+got.IdleJ, got.EnergyJ)
 	}
 }
 
@@ -79,7 +76,7 @@ func TestNewProcessSampleNoZones(t *testing.T) {
 	s := sample()
 	s.Zones = nil
 
-	got, err := NewProcessSample(s, proc.ProcessTimes{PID: 1}, proc.CPUUsage{Active: 1, Idle: 1}, 1)
+	got, err := NewSample(s, Target{PID: 1}, proc.CPUUsage{Active: 1, Idle: 1}, proc.Seconds(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,36 +86,57 @@ func TestNewProcessSampleNoZones(t *testing.T) {
 }
 
 func TestNewProcessSampleAllIdle(t *testing.T) {
-	// No active time: everything is idle energy, the process gets nothing.
-	got, err := NewProcessSample(sample(), proc.ProcessTimes{PID: 1}, proc.CPUUsage{Idle: 400}, 0)
+	// No active time: all the energy is idle, the process gets nothing.
+	got, err := NewSample(sample(), Target{PID: 1}, proc.CPUUsage{Idle: 400}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkSplit(t, "total", got.EnergySplit, EnergySplit{EnergyJ: 20, IdleJ: 20})
+	checkSplit(t, "total", got.EnergySplit, EnergySplit{EnergyJ: 20})
 }
 
 func TestNewProcessSampleNoCPUTime(t *testing.T) {
-	_, err := NewProcessSample(sample(), proc.ProcessTimes{PID: 1}, proc.CPUUsage{Steal: 5}, 0)
+	_, err := NewSample(sample(), Target{PID: 1}, proc.CPUUsage{Steal: 5}, 0)
 	if !errors.Is(err, ErrNoCPUTime) {
 		t.Errorf("err = %v, want ErrNoCPUTime", err)
 	}
 }
 
-func TestProcessShare(t *testing.T) {
+func TestShare(t *testing.T) {
 	for _, tc := range []struct {
-		active, process uint64
-		want            float64
+		active  uint64
+		seconds float64
+		want    float64
 	}{
-		{100, 25, 0.25},
-		{100, 100, 1},
-		{100, 103, 1}, // read a moment apart: capped
+		{100, proc.Seconds(25), 0.25},
+		{100, proc.Seconds(100), 1},
+		{100, proc.Seconds(103), 1}, // read a moment apart: capped
 		{0, 0, 0},
 		{0, 5, 0},
+		{100, 0, 0},
+		// a container's µs: 0.25 s of 1 s active (100 ticks at 100 Hz)
+		{uint64(proc.ClockTicks), 0.25, 0.25},
 	} {
-		if got := ProcessShare(proc.CPUUsage{Active: tc.active}, tc.process); !near(got, tc.want) {
-			t.Errorf("active %d, process %d: share %g, want %g", tc.active, tc.process, got, tc.want)
+		if got := Share(proc.CPUUsage{Active: tc.active}, tc.seconds); !near(got, tc.want) {
+			t.Errorf("active %d ticks, target %g s: share %g, want %g", tc.active, tc.seconds, got, tc.want)
 		}
 	}
+}
+
+func TestNewSampleContainer(t *testing.T) {
+	c := Target{Container: strings.Repeat("a", 64), Runtime: "docker"}
+	if !c.IsContainer() || (Target{PID: 1}).IsContainer() {
+		t.Error("IsContainer wrong")
+	}
+	// 2 s at ClockTicks, half active; the container used 0.5 s of the 1 s active.
+	ticks := uint64(proc.ClockTicks)
+	got, err := NewSample(sample(), c, proc.CPUUsage{Active: ticks, Idle: ticks}, 0.5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Target != c || !near(got.TargetCPU, 0.5) {
+		t.Errorf("target %+v, share %g", got.Target, got.TargetCPU)
+	}
+	checkSplit(t, "total", got.EnergySplit, EnergySplit{EnergyJ: 20, TargetJ: 5, TargetW: 2.5})
 }
 
 // TestNewProcessSampleServerZones uses a 2-socket server layout: every
@@ -135,7 +153,7 @@ func TestNewProcessSampleServerZones(t *testing.T) {
 		{ID: "intel-rapl:2", Name: "psys", EnergyJ: 90},
 	}
 	cpu := proc.CPUUsage{Active: 300, Idle: 100} // 75% active
-	got, err := NewProcessSample(s, proc.ProcessTimes{PID: 1}, cpu, 30)
+	got, err := NewSample(s, Target{PID: 1}, cpu, proc.Seconds(30))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,11 +168,9 @@ func TestNewProcessSampleServerZones(t *testing.T) {
 		}
 		// 75% active; the process used 30/300 = 10% of the active time.
 		want := EnergySplit{
-			EnergyJ:  in.EnergyJ,
-			ActiveJ:  in.EnergyJ * 0.75,
-			IdleJ:    in.EnergyJ * 0.25,
-			ProcessJ: in.EnergyJ * 0.075,
-			ProcessW: in.EnergyJ * 0.075 / 2,
+			EnergyJ: in.EnergyJ,
+			TargetJ: in.EnergyJ * 0.075,
+			TargetW: in.EnergyJ * 0.075 / 2,
 		}
 		checkSplit(t, in.ID+" "+in.Name, z.EnergySplit, want)
 	}

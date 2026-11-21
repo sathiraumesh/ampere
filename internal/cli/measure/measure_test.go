@@ -1,4 +1,4 @@
-package cli
+package measure
 
 import (
 	"encoding/json"
@@ -64,17 +64,6 @@ func measureSample(t *testing.T, args ...string) devices.Sample {
 		t.Fatalf("output is not JSON: %v\n%s", err, out)
 	}
 	return s
-}
-
-// runErr executes the root command and returns its output and error.
-func runErr(args ...string) (string, error) {
-	var out strings.Builder
-	cmd := RootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs(args)
-	err := cmd.Execute()
-	return out.String(), err
 }
 
 func TestMeasurePower(t *testing.T) {
@@ -384,21 +373,20 @@ func TestMeasureZonesByDefaultJSON(t *testing.T) {
 	}
 }
 
-func TestMeasureZonesSeparateTable(t *testing.T) {
+func TestMeasureZonesInOneTable(t *testing.T) {
 	fakeClock(t)
 	withSources(t, laptopZones())
 
 	out := run(t, "measure")
 
-	parts := strings.Split(strings.TrimSpace(out), "\n\n")
-	if len(parts) != 2 {
-		t.Fatalf("want total table and zones table separated by a blank line:\n%s", out)
+	want := [][]string{
+		{"DEVICE", "SOURCE", "INTERVAL", "(s)", "ZONE", "NAME", "PARENT", "ENERGY", "(J)", "POWER", "(W)"},
+		{"cpu", "fake", "1.000000", "total", "-", "-", "12.000000", "12.00"},
+		{"cpu", "fake", "1.000000", "intel-rapl:0", "package-0", "-", "12.000000", "12.00"},
+		{"cpu", "fake", "1.000000", "intel-rapl:0:0", "core", "intel-rapl:0", "5.000000", "5.00"},
 	}
-	assertContains(t, parts[0], "DEVICE", "cpu", "12.000000")
-	assertContains(t, parts[1], "ZONE", "NAME", "PARENT",
-		"intel-rapl:0 ", "package-0", "intel-rapl:0:0", "core", "5.000000")
-	if strings.Contains(parts[0], "core") {
-		t.Errorf("zones must not be in the total table:\n%s", parts[0])
+	if got := tableRows(out); !reflect.DeepEqual(got, want) {
+		t.Errorf("table:\n%s\ngot  %q\nwant %q", out, got, want)
 	}
 }
 

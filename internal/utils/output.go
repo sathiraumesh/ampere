@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"text/tabwriter"
 
 	"sathiraumesh/ampere/internal/devices"
 	"sathiraumesh/ampere/internal/host/attribution"
@@ -28,8 +27,7 @@ func WriteSample(out io.Writer, format string, s devices.Sample, header bool) er
 
 // AppendTo opens the file at path for appending (creating it if needed)
 // and calls write, with header true only if the file is new or empty, so
-// repeated runs build one table. Samples with zones are written as their
-// own blocks (total table + zones table), each with a header.
+// repeated runs build one table with one header line.
 func AppendTo(path string, write func(w io.Writer, header bool) error) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -47,35 +45,30 @@ func AppendTo(path string, write func(w io.Writer, header bool) error) error {
 	return f.Close() // Close can fail too (e.g. disk full), so report it
 }
 
-// WriteTable prints the total as a table (header row only if header is
-// true). If the sample has zones, they follow in a separate table, always
-// with its own header, after a blank line.
+// WriteTable prints the sample as table rows, with the header line first
+// if header is true. Without zones it is one row. With zones there is a
+// "total" row and one row per zone, all under the same header, so many
+// samples build one table. Parent zones include their children: zone rows
+// must not be summed.
 func WriteTable(out io.Writer, s devices.Sample, header bool) error {
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if header || len(s.Zones) > 0 {
-		fmt.Fprintln(w, "DEVICE\tSOURCE\tINTERVAL (s)\tENERGY (J)\tPOWER (W)")
+	t := newTable(out, col("DEVICE", 6), col("SOURCE", 6), col("INTERVAL (s)", 12))
+	if len(s.Zones) > 0 {
+		t.add(zoneColumns...)
 	}
-	fmt.Fprintf(w, "%s\t%s\t%.6f\t%.6f\t%.2f\n",
-		s.Device, s.Source, s.IntervalS, s.EnergyJ, s.PowerW)
-	if err := w.Flush(); err != nil {
-		return err
-	}
-	if len(s.Zones) == 0 {
-		return nil
+	t.add(col("ENERGY (J)", 11), col("POWER (W)", 9))
+	if header {
+		t.header()
 	}
 
-	// Zones: parents already include their children, so rows must not be summed.
-	fmt.Fprintln(out)
-	w = tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ZONE\tNAME\tPARENT\tENERGY (J)\tPOWER (W)")
-	for _, z := range s.Zones {
-		parent := z.Parent
-		if parent == "" {
-			parent = "-"
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%.6f\t%.2f\n", z.ID, z.Name, parent, z.EnergyJ, z.PowerW)
+	head := []string{s.Device, s.Source, fmt.Sprintf("%.6f", s.IntervalS)}
+	if len(s.Zones) == 0 {
+		return t.row(append(head, fmt.Sprintf("%.6f", s.EnergyJ), fmt.Sprintf("%.2f", s.PowerW))...)
 	}
-	return w.Flush()
+	t.row(append(head, totalZone, "-", "-", fmt.Sprintf("%.6f", s.EnergyJ), fmt.Sprintf("%.2f", s.PowerW))...)
+	for _, z := range s.Zones {
+		t.row(append(head, z.ID, z.Name, dash(z.Parent), fmt.Sprintf("%.6f", z.EnergyJ), fmt.Sprintf("%.2f", z.PowerW))...)
+	}
+	return t.err
 }
 
 // WriteJSON prints v (a sample) as one JSON object on one line, so many
@@ -85,44 +78,71 @@ func WriteJSON(out io.Writer, v any) error {
 	return json.NewEncoder(out).Encode(v)
 }
 
-// WriteProcessSample writes a process sample in the given format. header
-// controls whether the table header row is written (ignored for JSON).
-func WriteProcessSample(out io.Writer, format string, s attribution.ProcessSample, header bool) error {
+// WriteTargetSample writes a --pid or --container sample in the given
+// format. header controls whether the table header row is written
+// (ignored for JSON).
+func WriteTargetSample(out io.Writer, format string, s attribution.Sample, header bool) error {
 	if format == OutputJSON {
 		return WriteJSON(out, s)
 	}
-	return WriteProcessTable(out, s, header)
+	return WriteTargetTable(out, s, header)
 }
 
-// WriteProcessTable prints the process's total split as one row (header
-// only if header is true). If there are zones, they follow in a separate
-// table with its own header, after a blank line.
-func WriteProcessTable(out io.Writer, s attribution.ProcessSample, header bool) error {
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if header || len(s.Zones) > 0 {
-		fmt.Fprintln(w, "PID\tCOMM\tINTERVAL (s)\tCPU ACTIVE\tPID CPU\tENERGY (J)\tACTIVE (J)\tIDLE (J)\tPID (J)\tPID (W)")
+// WriteTargetTable prints the target's share as table rows, like
+// WriteTable: one row, or with zones a "total" row and one row per zone,
+// all under one header line (written only if header is true). Columns
+// about the target are labelled PID for a process and CTR for a container.
+func WriteTargetTable(out io.Writer, s attribution.Sample, header bool) error {
+	label := "PID"
+	t := newTable(out, col("PID", 7), col("COMM", 15))
+	ids := []string{fmt.Sprint(s.PID), s.Comm}
+	if s.IsContainer() {
+		label = "CTR"
+		t = newTable(out, col("CONTAINER", 12), col("RUNTIME", 10))
+		ids = []string{shortID(s.Container), s.Runtime}
 	}
-	fmt.Fprintf(w, "%d\t%s\t%.6f\t%.1f%%\t%.1f%%\t%.6f\t%.6f\t%.6f\t%.6f\t%.2f\n",
-		s.PID, s.Comm, s.IntervalS, 100*s.CPUActive, 100*s.ProcessCPU,
-		s.EnergyJ, s.ActiveJ, s.IdleJ, s.ProcessJ, s.ProcessW)
-	if err := w.Flush(); err != nil {
-		return err
+	t.add(col("INTERVAL (s)", 12), col(label+" CPU", 7))
+	if len(s.Zones) > 0 {
+		t.add(zoneColumns...)
 	}
-	if len(s.Zones) == 0 {
-		return nil
+	t.add(col("ENERGY (J)", 11), col(label+" (J)", 9), col(label+" (W)", 7))
+	if header {
+		t.header()
 	}
 
-	// Zones: parents already include their children, so rows must not be summed.
-	fmt.Fprintln(out)
-	w = tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ZONE\tNAME\tPARENT\tENERGY (J)\tACTIVE (J)\tIDLE (J)\tPID (J)\tPID (W)")
-	for _, z := range s.Zones {
-		parent := z.Parent
-		if parent == "" {
-			parent = "-"
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%.6f\t%.6f\t%.6f\t%.6f\t%.2f\n",
-			z.ID, z.Name, parent, z.EnergyJ, z.ActiveJ, z.IdleJ, z.ProcessJ, z.ProcessW)
+	head := append(ids, fmt.Sprintf("%.6f", s.IntervalS), fmt.Sprintf("%.1f%%", 100*s.TargetCPU))
+	values := func(e attribution.EnergySplit) []string {
+		return []string{fmt.Sprintf("%.6f", e.EnergyJ), fmt.Sprintf("%.6f", e.TargetJ), fmt.Sprintf("%.4f", e.TargetW)}
 	}
-	return w.Flush()
+	if len(s.Zones) == 0 {
+		return t.row(append(head, values(s.EnergySplit)...)...)
+	}
+	t.row(append(append(head, totalZone, "-", "-"), values(s.EnergySplit)...)...)
+	for _, z := range s.Zones {
+		t.row(append(append(head, z.ID, z.Name, dash(z.Parent)), values(z.EnergySplit)...)...)
+	}
+	return t.err
+}
+
+// totalZone is the ZONE of the row with the device's total.
+const totalZone = "total"
+
+// zoneColumns are the columns of a zone row. The widths fit RAPL IDs such
+// as "intel-rapl:0:0"; longer values still work but push the row right.
+var zoneColumns = []column{col("ZONE", 14), col("NAME", 10), col("PARENT", 14)}
+
+// dash returns s, or "-" if s is empty.
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// shortID is the first 12 characters of a container ID, as docker ps shows.
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
