@@ -315,3 +315,42 @@ func TestProcessUsage(t *testing.T) {
 		t.Errorf("PID reused: err = %v, want reused error", err)
 	}
 }
+
+func TestReadAllProcesses(t *testing.T) {
+	root := fakeProc(t, map[string]string{
+		"stat":      procStat,
+		"1/stat":    statLine("1", "systemd", "10", "5", "1"),
+		"42/stat":   statLine("42", "my prog", "300", "45", "900"),
+		"77/stat":   "garbage", // unreadable: skipped
+		"self/stat": statLine("42", "my prog", "300", "45", "900"),
+	})
+
+	got, err := readAllProcessesAt(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPID := map[int]ProcessTimes{}
+	for _, p := range got {
+		byPID[p.PID] = p
+	}
+	if len(got) != 2 || byPID[1].Comm != "systemd" || byPID[42].CPU() != 345 {
+		t.Errorf("got %+v, want systemd and my prog only", got)
+	}
+}
+
+func TestReadAllProcessesRealSystem(t *testing.T) {
+	if _, err := os.Stat("/proc/self/stat"); err != nil {
+		t.Skip("no /proc here")
+	}
+	got, err := ReadAllProcesses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range got {
+		found = found || p.PID == os.Getpid()
+	}
+	if !found {
+		t.Errorf("own process %d not in %d processes", os.Getpid(), len(got))
+	}
+}

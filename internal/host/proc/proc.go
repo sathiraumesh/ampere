@@ -198,6 +198,31 @@ func readCPUAt(root string) (CPUTimes, error) {
 	return CPUTimes{}, fmt.Errorf("%s: no cpu line", path)
 }
 
+// ReadAllProcesses reads the CPU time of every process in /proc, kernel
+// threads included. Processes that exit while being read are skipped.
+func ReadAllProcesses() ([]ProcessTimes, error) { return readAllProcessesAt(Root) }
+
+// readAllProcessesAt does the work of ReadAllProcesses for any procfs root.
+func readAllProcessesAt(root string) ([]ProcessTimes, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ProcessTimes, 0, len(entries))
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || pid <= 0 {
+			continue // not a process folder, e.g. "stat" or "self"
+		}
+		p, err := readProcessAt(root, pid)
+		if err != nil {
+			continue // exited between ReadDir and now, or unreadable
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
 // readProcessAt does the work of ReadProcess for any procfs root.
 func readProcessAt(root string, pid int) (ProcessTimes, error) {
 	path := filepath.Join(root, strconv.Itoa(pid), "stat")

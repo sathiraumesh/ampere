@@ -77,6 +77,39 @@ sudo ./bin/ampere measure --source rapl   # force a source (default: first avail
 sudo ./bin/ampere measure -o json         # JSON instead of a table
 make measure-root                         # same, builds first
 ```
+
+### Live view of every process and container
+
+```bash
+sudo ./bin/ampere top          # update every second
+sudo ./bin/ampere top -i 2s    # every 2 seconds
+```
+
+Like `top`, but sorted by power: the machine's power, active CPU share and
+zones at the top, then every process (or container, press `c`) with its
+share of the active energy. `ENERGY` is the total since `ampere top` started,
+and `ENERGY%` is that total as a share of the machine's energy over the same
+time. Containers show their name (Docker, rootful Podman) next to the ID.
+
+```text
+ampere top  cpu via rapl, every 1s  11:00:01
+power   10.00 W   active  31.0%   total 120.00 J   ▄▅▆▇█▄▅▆▇█▄▅
+package-0 14.20 W · └core 6.10 W
+
+[p] processes (8)   [c] containers (1)
+
+    PID  COMMAND               CPU      POWER      ENERGY  ENERGY%
+    100  firefox             10.0%    8.000 W     10.08 J     8.4%
+    ...
+```
+
+Keys: `p` processes, `c` containers, `tab` switch, `↑`/`↓` or `j`/`k`
+scroll, `q` quit.
+
+Search with `/`: type part of a process's command or PID, or a container's
+name, ID or runtime; `enter` keeps the search, `esc` clears it. The tabs then
+show `shown/all`, e.g. `containers (2/3)`.
+
 ## Energy attribution
 
 `ampere` measures the machine's energy over an interval and gives a process
@@ -129,6 +162,11 @@ is an estimate, not a measurement of that component.
 - [x] `measure`: whole-CPU energy and power over an interval
 - [x] `measure process <pid>`: energy of one process over an interval, active/idle per zone
 - [x] `measure container <id>`: same for a Docker, Podman or containerd container
+- [x] `top`: live view of power per process and container
 - [ ] Measured idle baseline as an alternative to the time-based split
 - [ ] Kubernetes pods via cgroup v2
 - [ ] More sources: hwmon, BMC/Redfish wall power
+
+## License
+
+MIT, see [LICENSE](LICENSE).

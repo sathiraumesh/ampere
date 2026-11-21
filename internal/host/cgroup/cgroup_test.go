@@ -212,3 +212,87 @@ func TestFindRealDocker(t *testing.T) {
 	}
 	t.Logf("%s %s: %d µs CPU", c.Runtime, c.ID[:12], usage)
 }
+
+func TestListContainers(t *testing.T) {
+	root := fakeCgroup(t,
+		"system.slice/docker-"+dockerID+".scope",
+		"machine.slice/libpod-conmon-"+podmanID+".scope", // not a container
+		"machine.slice/libpod-"+podmanID+".scope",
+		"kubepods.slice/cri-containerd-"+ctrdID+".scope",
+		"system.slice/cron.service",
+	)
+
+	got, err := listContainersAt(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, c := range got {
+		ids[c.ID] = c.Runtime
+	}
+	want := map[string]string{dockerID: Docker, podmanID: Podman, ctrdID: Containerd}
+	if len(ids) != len(want) || len(got) != len(want) {
+		t.Fatalf("got %+v, want %v", got, want)
+	}
+	for id, rt := range want {
+		if ids[id] != rt {
+			t.Errorf("%s: runtime %q, want %q", id[:12], ids[id], rt)
+		}
+	}
+}
+
+func TestListContainersNone(t *testing.T) {
+	got, err := listContainersAt(fakeCgroup(t, "system.slice/cron.service"))
+	if err != nil || len(got) != 0 {
+		t.Errorf("got %+v, %v; want none", got, err)
+	}
+}
+
+// fakeRuntimes points DockerRoot and PodmanStorage at temp folders.
+func fakeRuntimes(t *testing.T) (docker, podman string) {
+	t.Helper()
+	oldD, oldP := DockerRoot, PodmanStorage
+	t.Cleanup(func() { DockerRoot, PodmanStorage = oldD, oldP })
+	DockerRoot, PodmanStorage = t.TempDir(), t.TempDir()
+	return DockerRoot, PodmanStorage
+}
+
+func TestNameDocker(t *testing.T) {
+	docker, _ := fakeRuntimes(t)
+	write(t, filepath.Join(docker, "containers", dockerID, "config.v2.json"),
+		`{"ID":"`+dockerID+`","Name":"/k8s-101-worker","State":{"Running":true}}`)
+
+	if got := Name(Container{ID: dockerID, Runtime: Docker}); got != "k8s-101-worker" {
+		t.Errorf("Name = %q, want k8s-101-worker", got)
+	}
+	if got := Name(Container{ID: docker2ID, Runtime: Docker}); got != "" {
+		t.Errorf("unknown container: Name = %q, want empty", got)
+	}
+}
+
+func TestNamePodman(t *testing.T) {
+	_, podman := fakeRuntimes(t)
+	write(t, filepath.Join(podman, "overlay-containers", "containers.json"),
+		`[{"id":"`+sharedA+`","names":["other"]},{"id":"`+podmanID+`","names":["web","alias"]}]`)
+
+	if got := Name(Container{ID: podmanID, Runtime: Podman}); got != "web" {
+		t.Errorf("Name = %q, want web", got)
+	}
+}
+
+func TestNameUnknown(t *testing.T) {
+	docker, podman := fakeRuntimes(t)
+	write(t, filepath.Join(docker, "containers", dockerID, "config.v2.json"), "not json")
+	write(t, filepath.Join(podman, "overlay-containers", "containers.json"), "{}")
+
+	for _, c := range []Container{
+		{ID: dockerID, Runtime: Docker},     // bad JSON
+		{ID: podmanID, Runtime: Podman},     // not a list
+		{ID: ctrdID, Runtime: Containerd},   // not looked up
+		{ID: dockerID, Runtime: "whatever"}, // unknown runtime
+	} {
+		if got := Name(c); got != "" {
+			t.Errorf("%s %s: Name = %q, want empty", c.Runtime, c.ID[:12], got)
+		}
+	}
+}

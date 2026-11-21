@@ -50,8 +50,42 @@ func findContainerAt(root, id string) (Container, error) {
 	if id == "" || len(id) > utils.ContainerIDLen || !utils.IsHex(id) {
 		return Container{}, fmt.Errorf("container ID must be 1 to %d hex characters, got %q", utils.ContainerIDLen, id)
 	}
+	all, err := listContainersAt(root)
+	if err != nil {
+		return Container{}, err
+	}
+	var found []Container
+	for _, c := range all {
+		if strings.HasPrefix(c.ID, id) {
+			found = append(found, c)
+		}
+	}
+
+	switch len(found) {
+	case 0:
+		return Container{}, fmt.Errorf("no running docker, podman or containerd container with ID %q", id)
+	case 1:
+		return found[0], nil
+	default:
+		var ids []string
+		for _, c := range found {
+			ids = append(ids, c.Runtime+" "+c.ID[:12])
+		}
+		sort.Strings(ids)
+		return Container{}, fmt.Errorf("container ID %q matches %d containers (%s): use a longer ID",
+			id, len(found), strings.Join(ids, ", "))
+	}
+}
+
+// ListContainers returns every running Docker, Podman and containerd
+// container, in the order their cgroup folders are found.
+func ListContainers() ([]Container, error) { return listContainersAt(Root) }
+
+// listContainersAt does the work of ListContainers for any cgroup root, so
+// tests can use a fake tree.
+func listContainersAt(root string) ([]Container, error) {
 	if _, err := os.Stat(filepath.Join(root, "cgroup.controllers")); err != nil {
-		return Container{}, fmt.Errorf("%s is not a cgroup v2 tree (cgroup v1 is not supported): %w", root, err)
+		return nil, fmt.Errorf("%s is not a cgroup v2 tree (cgroup v1 is not supported): %w", root, err)
 	}
 
 	var found []Container
@@ -71,31 +105,15 @@ func findContainerAt(root, id string) (Container, error) {
 		if !ok {
 			return nil
 		}
-		if strings.HasPrefix(cid, id) {
-			found = append(found, Container{ID: cid, Runtime: runtime, Path: path})
-		}
+		found = append(found, Container{ID: cid, Runtime: runtime, Path: path})
 		// A container's own sub-cgroups (e.g. systemd inside podman) are
 		// already counted in its usage: do not look inside.
 		return filepath.SkipDir
 	})
 	if err != nil {
-		return Container{}, err
+		return nil, err
 	}
-
-	switch len(found) {
-	case 0:
-		return Container{}, fmt.Errorf("no running docker, podman or containerd container with ID %q", id)
-	case 1:
-		return found[0], nil
-	default:
-		var ids []string
-		for _, c := range found {
-			ids = append(ids, c.Runtime+" "+c.ID[:12])
-		}
-		sort.Strings(ids)
-		return Container{}, fmt.Errorf("container ID %q matches %d containers (%s): use a longer ID",
-			id, len(found), strings.Join(ids, ", "))
-	}
+	return found, nil
 }
 
 // containerDir reports whether the cgroup folder name (inside a folder

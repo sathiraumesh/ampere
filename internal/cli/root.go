@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"sathiraumesh/ampere/internal/cli/measure"
+	"sathiraumesh/ampere/internal/cli/top"
 )
 
 // Build info, set at build time by the Makefile with
@@ -43,6 +44,7 @@ time from /proc to estimate how much energy each process uses.`,
 	root.AddCommand(
 		statusCommand(),
 		measure.Command(),
+		top.Command(),
 	)
 
 	return root
